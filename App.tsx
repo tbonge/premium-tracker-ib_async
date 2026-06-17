@@ -10,7 +10,9 @@ import { useLocalization } from './context/LocalizationContext';
 const App: React.FC = () => {
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [parsedData, setParsedData] = useState<ParsedData | null>(null);
+  const [statementData, setStatementData] = useState<ParsedData | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const { t } = useLocalization();
 
@@ -22,6 +24,7 @@ const App: React.FC = () => {
     setIsLoading(true);
     setError(null);
     setParsedData(null);
+    setStatementData(null);
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target?.result as string;
@@ -39,6 +42,7 @@ const App: React.FC = () => {
     setError(null);
     setFileContent(null);
     setParsedData(null);
+    setStatementData(null);
 
     try {
       const response = await fetch('/api/ib/live', { method: 'POST' });
@@ -63,11 +67,18 @@ const App: React.FC = () => {
   const handleReset = () => {
     setFileContent(null);
     setParsedData(null);
+    setStatementData(null);
     setError(null);
     setIsLoading(false);
+    setIsRefreshing(false);
   };
 
   const mergeStatementWithGatewaySnapshot = useCallback((statementData: ParsedData, liveData: ParsedData): ParsedData => {
+    const liveUpdatedAt = liveData.accountInfo.period || new Date().toLocaleString();
+    const mergedPeriod = statementData.accountInfo.period
+      ? `${statementData.accountInfo.period} • ${liveUpdatedAt}`
+      : liveUpdatedAt;
+
     const mergedPlSummary = {
       stocks: {
         realized: statementData.plSummary.stocks.realized,
@@ -110,6 +121,7 @@ const App: React.FC = () => {
         ...statementData.accountInfo,
         account: liveData.accountInfo.account || statementData.accountInfo.account,
         baseCurrency: liveData.accountInfo.baseCurrency || statementData.accountInfo.baseCurrency,
+        period: mergedPeriod,
       },
       exchangeRates: {
         ...statementData.exchangeRates,
@@ -122,24 +134,68 @@ const App: React.FC = () => {
     };
   }, []);
 
+  const loadCurrentGatewaySnapshot = useCallback(async (): Promise<ParsedData | null> => {
+    const response = await fetch('/api/ib/current', { method: 'POST' });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const liveData = await response.json();
+    if (!liveData.positions || !liveData.nav) {
+      return null;
+    }
+
+    return liveData as ParsedData;
+  }, []);
+
   const enrichStatementWithGatewaySnapshot = useCallback(async (data: ParsedData): Promise<ParsedData> => {
     try {
-      const response = await fetch('/api/ib/current', { method: 'POST' });
-
-      if (!response.ok) {
+      const liveData = await loadCurrentGatewaySnapshot();
+      if (!liveData) {
         return data;
       }
 
-      const liveData = await response.json();
-      if (!liveData.positions || !liveData.nav) {
-        return data;
-      }
-
-      return mergeStatementWithGatewaySnapshot(data, liveData as ParsedData);
+      return mergeStatementWithGatewaySnapshot(data, liveData);
     } catch {
       return data;
     }
-  }, [mergeStatementWithGatewaySnapshot]);
+  }, [loadCurrentGatewaySnapshot, mergeStatementWithGatewaySnapshot]);
+
+  const handleRefreshData = useCallback(async () => {
+    if (!parsedData || isRefreshing) {
+      return;
+    }
+
+    setIsRefreshing(true);
+    setError(null);
+
+    try {
+      if (statementData) {
+        const liveData = await loadCurrentGatewaySnapshot();
+        if (liveData) {
+          setParsedData(mergeStatementWithGatewaySnapshot(statementData, liveData));
+        }
+      } else {
+        const response = await fetch('/api/ib/live', { method: 'POST' });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error || t('app.errors.ibGateway'));
+        }
+
+        if (!payload.positions || !payload.nav) {
+          throw new Error(t('app.errors.ibGatewayInvalid'));
+        }
+
+        setParsedData(payload as ParsedData);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('app.errors.ibGateway'));
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [isRefreshing, loadCurrentGatewaySnapshot, mergeStatementWithGatewaySnapshot, parsedData, statementData, t]);
   
   useEffect(() => {
     if (fileContent) {
@@ -153,6 +209,7 @@ const App: React.FC = () => {
           }
           const enrichedData = await enrichStatementWithGatewaySnapshot(data);
           if (!isCancelled) {
+            setStatementData(data);
             setParsedData(enrichedData);
           }
         } catch (err) {
@@ -200,7 +257,7 @@ const App: React.FC = () => {
     }
     
     if (parsedData) {
-      return <Dashboard data={parsedData} onReset={handleReset} />;
+      return <Dashboard data={parsedData} onReset={handleReset} onRefreshData={handleRefreshData} isRefreshing={isRefreshing} />;
     }
 
     return <FileUpload onFileSelect={handleFileChange} onLiveLoad={handleLiveLoad} />;

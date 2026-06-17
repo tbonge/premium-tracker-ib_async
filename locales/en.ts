@@ -64,6 +64,8 @@ export const en = {
     dashboard: {
         header: {
             title: "Portfolio Dashboard",
+            refreshData: "Refresh Data",
+            refreshingData: "Refreshing...",
             analyzeNewFile: "Analyze New File"
         },
         metrics: {

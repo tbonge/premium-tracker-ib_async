@@ -169,7 +169,7 @@ const ShortPutRisk: React.FC<ShortPutRiskProps> = ({
                                         <td className="p-2 font-mono text-right">
                                             {p.breakevenPrice !== undefined ? formatCurrency(p.breakevenPrice, p.currency) : '-'}
                                         </td>
-                                        <td className="p-2 font-mono text-right">
+                                        <td className={`p-2 font-mono text-right ${p.stockPrice !== undefined && p.breakevenPrice !== undefined && p.stockPrice < p.breakevenPrice ? 'text-brand-danger' : ''}`}>
                                             {p.stockPrice !== undefined ? formatCurrency(p.stockPrice, p.currency) : '-'}
                                         </td>
                                         <td className="p-2 font-mono text-right">{p.dte ?? '-'}</td>

@@ -2,7 +2,7 @@
 import React from 'react';
 import { AccountInfo } from '../../types';
 import { useLocalization } from '../../context/LocalizationContext';
-import { ShareIcon } from '../../constants';
+import { RepeatIcon, ShareIcon } from '../../constants';
 
 interface HeaderProps {
     accountInfo: AccountInfo;
@@ -10,10 +10,12 @@ interface HeaderProps {
     selectedCurrency: string;
     onCurrencyChange: (currency: string) => void;
     onReset: () => void;
+    onRefreshData: () => void;
+    isRefreshing: boolean;
     onPublicViewClick: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ accountInfo, exchangeRates, selectedCurrency, onCurrencyChange, onReset, onPublicViewClick }) => {
+const Header: React.FC<HeaderProps> = ({ accountInfo, exchangeRates, selectedCurrency, onCurrencyChange, onReset, onRefreshData, isRefreshing, onPublicViewClick }) => {
     const { t } = useLocalization();
 
     return (
@@ -42,6 +44,15 @@ const Header: React.FC<HeaderProps> = ({ accountInfo, exchangeRates, selectedCur
                     title={t('publicDashboard.publicViewButtonTooltip')}
                 >
                     <ShareIcon className="w-5 h-5" />
+                </button>
+                <button
+                    onClick={onRefreshData}
+                    disabled={isRefreshing}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-brand-card text-brand-text-secondary font-semibold rounded-lg shadow-md hover:bg-brand-accent-hover hover:text-white focus:outline-none focus:ring-2 focus:ring-brand-accent focus:ring-opacity-75 disabled:opacity-60 disabled:cursor-not-allowed"
+                    title={t('dashboard.header.refreshData')}
+                >
+                    <RepeatIcon className={`w-5 h-5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                    {isRefreshing ? t('dashboard.header.refreshingData') : t('dashboard.header.refreshData')}
                 </button>
                 <button onClick={onReset} className="px-4 py-2 bg-brand-accent text-white font-semibold rounded-lg shadow-md hover:bg-brand-accent-hover self-start">
                     {t('dashboard.header.analyzeNewFile')}

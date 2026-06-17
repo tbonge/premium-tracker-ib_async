@@ -9,6 +9,7 @@ export interface Position {
   multiplier: number;
   costBasis: number;
   closePrice: number;
+  underlyingPrice?: number;
   value: number;
   unrealizedPL: number;
   currency: string;

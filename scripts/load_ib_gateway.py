@@ -349,6 +349,7 @@ def build_dashboard(ib: IB) -> dict[str, Any]:
             "multiplier": multiplier,
             "costBasis": cost_basis,
             "closePrice": close_price,
+            "underlyingPrice": None,
             "value": market_value,
             "unrealizedPL": unrealized,
             "currency": currency,
@@ -376,7 +377,7 @@ def build_dashboard(ib: IB) -> dict[str, Any]:
 
     for position in data["positions"]:
         if position["isOption"] and position["baseSymbol"] in underlying_prices:
-            position["closePrice"] = underlying_prices[position["baseSymbol"]]
+            position["underlyingPrice"] = underlying_prices[position["baseSymbol"]]
 
     total_unrealized = sum(position["unrealizedPL"] for position in data["positions"])
     data["plSummary"]["total"]["unrealized"] = total_unrealized

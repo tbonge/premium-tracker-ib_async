@@ -23,9 +23,11 @@ import { useLocalization } from '../context/LocalizationContext';
 interface DashboardProps {
   data: ParsedData;
   onReset: () => void;
+  onRefreshData: () => void;
+  isRefreshing: boolean;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
+const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isRefreshing }) => {
     const { locale } = useLocalization();
     const [view, setView] = useState<'private' | 'public'>('private');
     const [selectedCurrency, setSelectedCurrency] = useState<string>(data.nav.baseCurrency);
@@ -61,8 +63,8 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
             }
         });
         data.positions.forEach(p => {
-            if (p.isOption && p.baseSymbol && p.closePrice > 0 && !stockPriceMap.has(p.baseSymbol)) {
-                stockPriceMap.set(p.baseSymbol, p.closePrice);
+            if (p.isOption && p.baseSymbol && p.underlyingPrice && p.underlyingPrice > 0 && !stockPriceMap.has(p.baseSymbol)) {
+                stockPriceMap.set(p.baseSymbol, p.underlyingPrice);
             }
         });
         const today = new Date();
@@ -387,6 +389,8 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
                 selectedCurrency={selectedCurrency}
                 onCurrencyChange={setSelectedCurrency}
                 onReset={onReset}
+                onRefreshData={onRefreshData}
+                isRefreshing={isRefreshing}
                 onPublicViewClick={() => setView('public')}
             />
             <MetricCards 
