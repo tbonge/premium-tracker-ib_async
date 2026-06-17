@@ -1,0 +1,4 @@
+ib_async>=1.0.0
+aeventkit>=2.1.0
+nest_asyncio
+tzdata>=2025.2

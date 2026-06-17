@@ -34,28 +34,144 @@ const App: React.FC = () => {
     reader.readAsText(file);
   }, [t]);
 
+  const handleLiveLoad = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    setFileContent(null);
+    setParsedData(null);
+
+    try {
+      const response = await fetch('/api/ib/live', { method: 'POST' });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error || t('app.errors.ibGateway'));
+      }
+
+      if (!payload.positions || !payload.nav) {
+        throw new Error(t('app.errors.ibGatewayInvalid'));
+      }
+
+      setParsedData(payload as ParsedData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('app.errors.ibGateway'));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [t]);
+
   const handleReset = () => {
     setFileContent(null);
     setParsedData(null);
     setError(null);
     setIsLoading(false);
   };
+
+  const mergeStatementWithGatewaySnapshot = useCallback((statementData: ParsedData, liveData: ParsedData): ParsedData => {
+    const mergedPlSummary = {
+      stocks: {
+        realized: statementData.plSummary.stocks.realized,
+        unrealized: liveData.plSummary.stocks.unrealized,
+        total: statementData.plSummary.stocks.realized + liveData.plSummary.stocks.unrealized,
+      },
+      options: {
+        realized: statementData.plSummary.options.realized,
+        unrealized: liveData.plSummary.options.unrealized,
+        total: statementData.plSummary.options.realized + liveData.plSummary.options.unrealized,
+      },
+      forex: {
+        realized: statementData.plSummary.forex.realized,
+        unrealized: liveData.plSummary.forex.unrealized,
+        total: statementData.plSummary.forex.realized + liveData.plSummary.forex.unrealized,
+      },
+      total: {
+        realized: statementData.plSummary.total.realized,
+        unrealized: liveData.plSummary.total.unrealized,
+        total: statementData.plSummary.total.realized + liveData.plSummary.total.unrealized,
+      },
+    };
+
+    const navChange = { ...statementData.navChange };
+    if (liveData.totalNAV > 0) {
+      const previousEndingValue = statementData.navChange.endingValue || statementData.totalNAV;
+      if (previousEndingValue > 0) {
+        navChange.markToMarket += liveData.totalNAV - previousEndingValue;
+      }
+      navChange.endingValue = liveData.totalNAV;
+    }
+
+    const hasLiveAccountState = liveData.totalNAV > 0 || liveData.positions.length > 0 || liveData.nav.cash !== 0;
+
+    return {
+      ...statementData,
+      positions: liveData.positions.length > 0 ? liveData.positions : statementData.positions,
+      nav: hasLiveAccountState ? liveData.nav : statementData.nav,
+      accountInfo: {
+        ...statementData.accountInfo,
+        account: liveData.accountInfo.account || statementData.accountInfo.account,
+        baseCurrency: liveData.accountInfo.baseCurrency || statementData.accountInfo.baseCurrency,
+      },
+      exchangeRates: {
+        ...statementData.exchangeRates,
+        ...liveData.exchangeRates,
+      },
+      plSummary: mergedPlSummary,
+      totalNAV: liveData.totalNAV || statementData.totalNAV,
+      navChange,
+      syepIncome: statementData.syepIncome,
+    };
+  }, []);
+
+  const enrichStatementWithGatewaySnapshot = useCallback(async (data: ParsedData): Promise<ParsedData> => {
+    try {
+      const response = await fetch('/api/ib/current', { method: 'POST' });
+
+      if (!response.ok) {
+        return data;
+      }
+
+      const liveData = await response.json();
+      if (!liveData.positions || !liveData.nav) {
+        return data;
+      }
+
+      return mergeStatementWithGatewaySnapshot(data, liveData as ParsedData);
+    } catch {
+      return data;
+    }
+  }, [mergeStatementWithGatewaySnapshot]);
   
   useEffect(() => {
     if (fileContent) {
-      try {
-        const data = parseIbkrCsv(fileContent);
-        if (data.positions.length === 0 && data.nav.cash === 0) {
-            throw new Error(t('app.errors.criticalData'));
+      let isCancelled = false;
+
+      const parseAndEnrich = async () => {
+        try {
+          const data = parseIbkrCsv(fileContent);
+          if (data.positions.length === 0 && data.nav.cash === 0) {
+              throw new Error(t('app.errors.criticalData'));
+          }
+          const enrichedData = await enrichStatementWithGatewaySnapshot(data);
+          if (!isCancelled) {
+            setParsedData(enrichedData);
+          }
+        } catch (err) {
+          if (!isCancelled) {
+            setError(err instanceof Error ? err.message : t('app.errors.unknownParse'));
+          }
+        } finally {
+          if (!isCancelled) {
+            setIsLoading(false);
+          }
         }
-        setParsedData(data);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : t('app.errors.unknownParse'));
-      } finally {
-        setIsLoading(false);
-      }
+      };
+
+      parseAndEnrich();
+      return () => {
+        isCancelled = true;
+      };
     }
-  }, [fileContent, t]);
+  }, [fileContent, t, enrichStatementWithGatewaySnapshot]);
 
   const renderContent = () => {
     if (isLoading) {
@@ -87,7 +203,7 @@ const App: React.FC = () => {
       return <Dashboard data={parsedData} onReset={handleReset} />;
     }
 
-    return <FileUpload onFileSelect={handleFileChange} />;
+    return <FileUpload onFileSelect={handleFileChange} onLiveLoad={handleLiveLoad} />;
   };
 
   return (

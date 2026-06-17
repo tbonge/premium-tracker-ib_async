@@ -54,7 +54,17 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
 
     const dashboardData = useMemo(() => {
         const stockPositions = data.positions.filter(p => !p.isOption);
-        const stockPriceMap = new Map<string, number>(stockPositions.map(p => [p.symbol, p.closePrice]));
+        const stockPriceMap = new Map<string, number>();
+        stockPositions.forEach(p => {
+            if (p.closePrice > 0) {
+                stockPriceMap.set(p.symbol, p.closePrice);
+            }
+        });
+        data.positions.forEach(p => {
+            if (p.isOption && p.baseSymbol && p.closePrice > 0 && !stockPriceMap.has(p.baseSymbol)) {
+                stockPriceMap.set(p.baseSymbol, p.closePrice);
+            }
+        });
         const today = new Date();
 
         const shortPuts = data.positions
@@ -359,6 +369,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
             unlikelyAssignmentValue,
             likelyCashNeeded,
             unlikelyCashNeeded,
+            likelyAssignments,
             likelyShortfallDetails,
             unlikelyShortfallDetails,
         };
@@ -405,9 +416,11 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
                 unlikelyAssignmentValue={dashboardData.unlikelyAssignmentValue}
                 likelyCashNeeded={dashboardData.likelyCashNeeded}
                 unlikelyCashNeeded={dashboardData.unlikelyCashNeeded}
+                likelyAssignments={dashboardData.likelyAssignments}
                 likelyShortfallDetails={dashboardData.likelyShortfallDetails}
                 unlikelyShortfallDetails={dashboardData.unlikelyShortfallDetails}
                 formatInSelectedCurrency={formatInSelectedCurrency}
+                formatCurrency={formatCurrency}
             />
             <ShortOptionsPerformance 
                 shortPutPerformance={dashboardData.shortPutPerformance}

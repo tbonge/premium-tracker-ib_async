@@ -1,6 +1,6 @@
 
 import React, { useState, useCallback } from 'react';
-import { UploadIcon, ChevronDownIcon, ChevronUpIcon } from '../constants';
+import { UploadIcon, ChevronDownIcon, ChevronUpIcon, PlugIcon } from '../constants';
 import { InteractiveBrokersLogo } from './InteractiveBrokersLogo';
 import Footer from './Footer';
 import WheelStrategyGuide from './WheelStrategyGuide';
@@ -11,9 +11,10 @@ import LanguageSwitcher from './LanguageSwitcher';
 
 interface FileUploadProps {
   onFileSelect: (file: File) => void;
+  onLiveLoad: () => void;
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect }) => {
+const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, onLiveLoad }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isInstructionsVisible, setIsInstructionsVisible] = useState(false);
   const [isGuideVisible, setIsGuideVisible] = useState(false);
@@ -62,6 +63,20 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect }) => {
             <p className="max-w-3xl mx-auto text-md text-brand-text-secondary mb-8">
                 {t('fileUpload.description')}
             </p>
+        </div>
+
+        <div className="mb-6 flex flex-col items-center gap-3 rounded-md border border-brand-card bg-brand-surface p-5 text-center">
+          <button
+            type="button"
+            onClick={onLiveLoad}
+            className="inline-flex items-center gap-2 rounded-md bg-brand-accent px-5 py-3 font-semibold text-white shadow-md transition-colors hover:bg-brand-accent-hover focus:outline-none focus:ring-2 focus:ring-brand-accent focus:ring-opacity-75"
+          >
+            <PlugIcon className="h-5 w-5" />
+            {t('fileUpload.liveLoad.button')}
+          </button>
+          <p className="max-w-2xl text-sm text-brand-text-secondary">
+            {t('fileUpload.liveLoad.description')}
+          </p>
         </div>
         
         <label

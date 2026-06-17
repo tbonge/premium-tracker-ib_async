@@ -7,13 +7,19 @@ export const en = {
             title: "An Error Occurred",
             fileRead: "Failed to read the file.",
             criticalData: "Could not parse critical data from the file. Please ensure it's a valid IBKR activity statement.",
-            unknownParse: "An unknown parsing error occurred."
+            unknownParse: "An unknown parsing error occurred.",
+            ibGateway: "Failed to load live data from IB Gateway.",
+            ibGatewayInvalid: "IB Gateway returned an unexpected data shape."
         }
     },
     fileUpload: {
         title: "Portfolio Analyzer",
         subtitle: "Upload your IBKR activity statement to get started.",
         description: "Turn your Interactive Brokers activity statement into a powerful decision-making tool. Get a crystal-clear view of your performance, specializing in options selling and the wheel strategy. Our dashboard helps you visualize your gains, manage portfolio risk, and trade on margin with confidence.",
+        liveLoad: {
+            button: "Load from IB Gateway",
+            description: "Pull a live snapshot from a local IB Gateway or TWS session on 127.0.0.1:4001 using ib_async. Historical statement analytics still require a CSV."
+        },
         dropzone: {
             dragAndDrop: "Drag and drop",
             or: "or",
@@ -144,6 +150,13 @@ export const en = {
                 title: "Unlikely Assignment Risk",
                 assignmentValue: { title: "Assignment Value (OTM)", description: "For puts that are Out-of-The-Money or have a positive P/L.", tooltip: "The total cash required to purchase shares for all short puts that are currently Out-of-The-Money (OTM)." },
                 additionalShortfall: { title: "Additional Shortfall", description: "More funds needed if these puts are also assigned.", tooltip: "The amount of additional cash required if all 'Unlikely' (OTM) puts were also assigned, after accounting for cash used on likely assignments." }
+            },
+            atRiskPositions: {
+                title: "Open Positions at Risk of Assignment",
+                assignmentDate: "Assignment Date",
+                currentPrice: "Current Price",
+                currentPriceTooltip: "Current price or the latest available closing price for the underlying stock.",
+                unknownDate: "Unknown"
             }
         },
         shortOptionsStrategy: {

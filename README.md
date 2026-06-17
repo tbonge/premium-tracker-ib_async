@@ -38,7 +38,7 @@ This tool processes your entire activity statement CSV file directly in your bro
     -   Click the **"Download"** button.
 4.  **Open the IBKR Portfolio Analyzer** web app.
 5.  **Drag and drop** the downloaded CSV file onto the upload area, or click to select it from your computer.
-6.  Your interactive dashboard will be generated instantly!
+6.  The app parses the full statement history, then attempts to refresh the current account snapshot from your local read-only IB Gateway. If Gateway is running, current NAV, cash, open positions, prices, and unrealized P/L are updated to the latest available values. If Gateway is not available, the dashboard falls back to the statement data only.
 
 **Important**: Do not open and re-save the CSV file in spreadsheet software like Excel, as it may alter the date/number formatting and cause parsing errors.
 
@@ -57,45 +57,136 @@ This tool processes your entire activity statement CSV file directly in your bro
 
 ## 🖥️ Getting Started (For Developers)
 
-This project is a static web application with no backend dependencies. You can run it locally with any simple HTTP server.
+This project is a Vite-powered React application. Use the npm scripts below to run it locally.
 
 ### Prerequisites
 
 -   A modern web browser.
--   A simple local web server. If you have Python installed, you can use its built-in server.
+-   [Node.js](https://nodejs.org/) and npm.
+-   Python 3.10+ with `ib_async` if you want to load live data from a local IB Gateway.
 
 ### Running Locally
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/your-username/ibkr-portfolio-analyzer.git
-    cd ibkr-portfolio-analyzer
+    git clone https://github.com/tbonge/premium-tracker-ib_async.git
+    cd premium-tracker-ib_async
     ```
 
-2.  **Start a local server:**
-    If you have Python 3, you can run:
+2.  **Install dependencies:**
     ```bash
-    python -m http.server
-    ```
-    Alternatively, you can use other tools like `live-server` for Node.js:
-    ```bash
-    npm install -g live-server
-    live-server .
+    npm install
+    pip install -r requirements.txt
     ```
 
-3.  **Open the application:**
-    Navigate to `http://localhost:8000` (or the address provided by your server) in your web browser.
+3.  **Start IB Gateway or TWS:**
+    -   Enable API access in IB Gateway/TWS.
+    -   Make sure the socket port is `4001` on this machine.
+    -   If you use a different port, set `IB_GATEWAY_PORT` before starting Vite.
+
+4.  **Start the app:**
+    ```bash
+    npm start
+    ```
+
+5.  **Open the application:**
+    Navigate to the local address shown in your terminal, usually `http://localhost:5173`.
+
+### Live IB Gateway Loading
+
+The "Load from IB Gateway" button runs `scripts/load_ib_gateway.py` through the local Vite dev server. The script connects to `127.0.0.1:4001` with client id `77` in IB read-only mode by default, reads account values, portfolio positions, market prices, open-option average cost, and option execution premiums through `ib_async`, then returns dashboard JSON to the app.
+
+Optional environment variables:
+
+-   `IB_GATEWAY_HOST` - defaults to `127.0.0.1`
+-   `IB_GATEWAY_PORT` - defaults to `4001`
+-   `IB_CLIENT_ID` - defaults to `77`
+-   `IB_PYTHON` - Python executable to use, defaults to `python`
+-   `IB_FLEX_TOKEN` - optional IBKR Flex Web Service token for historical statement data
+-   `IB_FLEX_QUERY_ID` - optional Flex Query ID for historical statement data
+
+Live Gateway data is a current snapshot. When loading a CSV statement, the app uses the statement for full history and overlays the latest Gateway snapshot for current NAV, cash, open positions, prices, and unrealized P/L. When both `IB_FLEX_TOKEN` and `IB_FLEX_QUERY_ID` are supplied, the live loader also retrieves a Flex report and merges historical monthly premium income, closed positions, realized P/L, commissions, fees, interest, and ticker P/L into the dashboard. If either Flex value is missing, the live loader falls back to the Gateway-only snapshot.
+
+Open short option premium is populated from the live portfolio item's `averageCost` when available, with same-contract option executions as a fallback. Monthly premium income is populated from synchronized/requested option sale fills. If IB Gateway does not return older executions, the open premium can still load from average cost, but historical monthly income remains limited to the fills returned by the API session.
+
+### IBKR Flex Query Setup
+
+IB Gateway provides live account state, but full statement-style history is available through IBKR Flex Web Service. Flex reports are useful for historical trades, commissions, realized P/L, cash activity, interest, fees, dividends, and option premium income.
+
+To create a Flex Web Service token:
+
+1.  Log in to the IBKR Client Portal.
+2.  Open **Settings**.
+3.  Find **Flex Web Service** or **Configure Flex Web Service**.
+4.  Enable the service if it is not already enabled.
+5.  Generate a token.
+6.  Store the token somewhere secure. Treat it like a password because it can retrieve account report data.
+
+To create a Flex Query:
+
+1.  In Client Portal, go to **Performance & Reports** > **Flex Queries**.
+2.  Create a new **Activity Flex Query**.
+3.  Choose the account or accounts to include.
+4.  Set the period to the history range you want the app to analyze.
+5.  Include sections that map to the app's dashboard data:
+    -   **Trades** / **Trade Confirms**
+    -   **Open Positions**
+    -   **Net Asset Value**
+    -   **Change in NAV**
+    -   **Cash Report**
+    -   **Realized & Unrealized Performance Summary**
+    -   **Mark-to-Market Performance Summary**
+    -   **Interest**
+    -   **Fees**
+    -   **Dividends**
+    -   **Financial Instrument Information**
+    -   **Stock Yield Enhancement Program Securities Lent Interest Details**, if you use SYEP
+6.  Save the query.
+7.  Open the saved query details and copy its **Query ID**. This is the `queryId` used by `ib_async.FlexReport`.
+
+With a token and query id, `ib_async` can retrieve the report like this:
+
+```python
+from ib_async import FlexReport
+
+report = FlexReport(token="YOUR_FLEX_TOKEN", queryId="YOUR_QUERY_ID")
+print(report.topics())
+trades = report.extract("Trade")
+```
+
+The token and query id are optional for the "Load from IB Gateway" button. When both are configured, the loader uses them to merge Flex history with the live Gateway snapshot. When either value is missing, the loader uses only IB Gateway.
+
+To enable Flex history in the "Load from IB Gateway" button, set both values before starting Vite:
+
+```bash
+IB_FLEX_TOKEN=your-token
+IB_FLEX_QUERY_ID=your-query-id
+npm start
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:IB_FLEX_TOKEN = "your-token"
+$env:IB_FLEX_QUERY_ID = "your-query-id"
+npm start
+```
+
+If either value is omitted, the app loads only the live Gateway snapshot.
 
 ## 🚀 Deployment
 
-Since this is a client-side only application, you can deploy it to any static site hosting service.
+Since this is a client-side only application, you can deploy the built files to any static site hosting service.
 
-1.  Simply upload the contents of the repository to your hosting provider.
+1.  Build the app:
+    ```bash
+    npm run build
+    ```
+2.  Upload the generated `dist` folder to your hosting provider.
 2.  Popular free options include:
     -   [GitHub Pages](https://pages.github.com/)
     -   [Netlify](https://www.netlify.com/)
     -   [Vercel](https://vercel.com/)
-3.  No build step is required due to the use of `es-modules` and `import-maps` directly in the browser.
 
 ## 🤝 Contributing
 
