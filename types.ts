@@ -129,6 +129,16 @@ export interface MonthlySummary {
     salesTax: number;
 }
 
+export interface WeeklySummary extends Omit<MonthlySummary, 'month'> {
+    week: string;
+}
+
+export interface DailyOptionsSummary {
+    date: string; // "YYYY-MM-DD" format
+    premiumCollected: number;
+    closedPL: number;
+}
+
 export interface TickerPL {
     ticker: string;
     totalPL: number;
@@ -154,6 +164,44 @@ export interface ShortPutIncomeSummary {
     hasData: boolean;
 }
 
+export interface HistoryStatus {
+  source: 'gateway' | 'flex' | 'csv' | 'gateway+flex';
+  complete: boolean;
+  warnings: string[];
+}
+
+export interface MarginLiquidity {
+  netLiquidation: number;
+  totalCash: number;
+  availableFunds: number;
+  excessLiquidity: number;
+  buyingPower: number;
+  maintenanceMargin: number;
+  initialMargin: number;
+  cushion: number;
+}
+
+export interface EquityHistoryPoint {
+  date: string;
+  total: number;
+  cash: number;
+  stocks: number;
+  options: number;
+  drawdown: number;
+}
+
+export interface PremiumEfficiencyRow {
+  symbol: string;
+  premiumCollected: number;
+  realizedPL: number;
+  commissions: number;
+  putCapital: number;
+  premiumYield: number;
+  realizedReturn: number;
+  averageDaysOpen: number;
+  trades: number;
+}
+
 export interface ParsedData {
   positions: Position[];
   closedPositions: ClosedPosition[];
@@ -172,8 +220,14 @@ export interface ParsedData {
   optionsStrategyMetrics: OptionsStrategyMetrics;
   wheelCycleAnalysis: WheelCycleAnalysis;
   monthlySummary: MonthlySummary[];
+  weeklySummary: WeeklySummary[];
+  dailyOptionsSummary: DailyOptionsSummary[];
   tickerPL: TickerPL[];
   syepIncome?: number;
   navChange: NAVChange;
   shortPutIncomeSummary: ShortPutIncomeSummary;
+  historyStatus?: HistoryStatus;
+  marginLiquidity: MarginLiquidity;
+  equityHistory: EquityHistoryPoint[];
+  premiumEfficiency: PremiumEfficiencyRow[];
 }

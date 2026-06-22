@@ -1,4 +1,4 @@
-import { ParsedData, Position, ClosedPosition, ArocTrade, WheelCycle, WheelCycleAnalysis, WheelCycleTrade, PendingWheelCycle, MonthlySummary, TickerPL, NAVChange, ShortPutIncomeSummary } from '../types';
+import { ParsedData, Position, ClosedPosition, ArocTrade, WheelCycle, WheelCycleAnalysis, WheelCycleTrade, PendingWheelCycle, MonthlySummary, WeeklySummary, TickerPL, NAVChange, ShortPutIncomeSummary, DailyOptionsSummary } from '../types';
 
 const safeParseFloat = (val: string): number => {
     if (!val || typeof val !== 'string') return 0;
@@ -270,10 +270,8 @@ function analyzeMonthlySummary(
             
             const currency = row['Currency'];
             const rate = exchangeRates[currency] || 1;
-            const amount = safeParseFloat(row['Amount']); // This is negative
-
-            // Storing as a positive number
-            summaryByMonth[monthKey].fees += Math.abs(amount * rate);
+            const amount = safeParseFloat(row['Amount']); // Charges are negative; refunds are positive.
+            summaryByMonth[monthKey].fees -= amount * rate;
         }
     }
 
@@ -316,6 +314,114 @@ function analyzeMonthlySummary(
             ...data
         }))
         .sort((a, b) => a.month.localeCompare(b.month));
+}
+
+function formatDateKey(date: Date): string {
+    return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
+}
+
+function analyzeDailyOptionsSummary(
+    trades: any[],
+    exchangeRates: { [key: string]: number }
+): DailyOptionsSummary[] {
+    const optionTrades = (trades || [])
+        .filter(r => r['DataDiscriminator'] === 'Order' && r['Asset Category'] === 'Equity and Index Options')
+        .map(trade => ({
+            ...trade,
+            parsedDate: new Date(trade['Date/Time'].replace(',', '')),
+        }))
+        .filter(trade => !isNaN(trade.parsedDate.getTime()));
+
+    if (optionTrades.length === 0) {
+        return [];
+    }
+
+    const endDate = new Date(Math.max(...optionTrades.map(trade => trade.parsedDate.getTime())));
+    endDate.setHours(0, 0, 0, 0);
+    const startDate = new Date(endDate);
+    startDate.setDate(startDate.getDate() - 29);
+
+    const summaryByDate: Record<string, DailyOptionsSummary> = {};
+    for (let i = 0; i < 30; i++) {
+        const date = new Date(startDate);
+        date.setDate(startDate.getDate() + i);
+        const key = formatDateKey(date);
+        summaryByDate[key] = { date: key, premiumCollected: 0, closedPL: 0 };
+    }
+
+    for (const trade of optionTrades) {
+        const tradeDate = new Date(trade.parsedDate);
+        tradeDate.setHours(0, 0, 0, 0);
+        if (tradeDate < startDate || tradeDate > endDate) {
+            continue;
+        }
+
+        const { isOption, optionType } = parseOptionSymbol(trade.Symbol);
+        if (!isOption || (optionType !== 'P' && optionType !== 'C')) {
+            continue;
+        }
+
+        const key = formatDateKey(tradeDate);
+        const summary = summaryByDate[key];
+        const code = trade.Code || '';
+        const quantity = safeParseFloat(trade.Quantity);
+        const rate = exchangeRates[trade.Currency] || 1;
+
+        if (quantity < 0 && code.includes('O')) {
+            summary.premiumCollected += (safeParseFloat(trade.Proceeds) + safeParseFloat(trade['Comm/Fee'])) * rate;
+        } else if (quantity > 0 && !code.includes('A') && (code.includes('C') || code.includes('Ep'))) {
+            summary.closedPL += safeParseFloat(trade['Realized P/L']) * rate;
+        }
+    }
+
+    return Object.values(summaryByDate);
+}
+
+function weeklyDateKey(value: string): string | null {
+    if (!value) return null;
+    const date = new Date(value.replace(',', ''));
+    if (isNaN(date.getTime())) return null;
+    date.setHours(0, 0, 0, 0);
+    date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+    return formatDateKey(date);
+}
+
+function analyzeWeeklySummary(
+    daily: DailyOptionsSummary[],
+    trades: any[] = [],
+    interestRows: any[] = [],
+    feeRows: any[] = [],
+    exchangeRates: { [key: string]: number }
+): WeeklySummary[] {
+    const weeks = new Map<string, WeeklySummary>();
+    const ensure = (week: string): WeeklySummary => {
+        if (!weeks.has(week)) weeks.set(week, { week, optionsPL: 0, optionsPremium: 0, stocksPL: 0, forexPL: 0, syepIncome: 0, interest: 0, interestPaid: 0, commissions: 0, fees: 0, salesTax: 0 });
+        return weeks.get(week)!;
+    };
+    daily.forEach(row => {
+        const week = weeklyDateKey(row.date);
+        if (week) { const bucket = ensure(week); bucket.optionsPremium += row.premiumCollected; bucket.optionsPL += row.closedPL; }
+    });
+    trades.filter(row => row.DataDiscriminator === 'Order').forEach(row => {
+        const week = weeklyDateKey(row['Date/Time']);
+        if (!week) return;
+        const bucket = ensure(week);
+        const rate = exchangeRates[row.Currency] || 1;
+        bucket.commissions += Math.abs(safeParseFloat(row['Comm/Fee']) * rate);
+        if (row['Asset Category'] === 'Stocks') bucket.stocksPL = (bucket.stocksPL || 0) + safeParseFloat(row['Realized P/L']) * rate;
+    });
+    interestRows.forEach(row => {
+        const week = weeklyDateKey(row.Date || row['Value Date']);
+        if (!week) return;
+        const amount = safeParseFloat(row.Amount || row.Interest) * (exchangeRates[row.Currency] || 1);
+        ensure(week).interest += amount;
+        if (amount < 0) ensure(week).interestPaid += Math.abs(amount);
+    });
+    feeRows.forEach(row => {
+        const week = weeklyDateKey(row.Date);
+        if (week) ensure(week).fees -= safeParseFloat(row.Amount) * (exchangeRates[row.Currency] || 1);
+    });
+    return [...weeks.values()].sort((a, b) => a.week.localeCompare(b.week));
 }
 
 
@@ -368,8 +474,9 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                     const openCommFee = safeParseFloat(openTrade['Comm/Fee']);
                     const openCurrency = openTrade['Currency'];
                     const openRate = exchangeRates[openCurrency] || 1;
-                    // Proceeds are positive for sale, commFee is negative.
-                    initialPutPremium += (openProceeds + openCommFee) * openRate;
+                    const contractsInOpeningTrade = Math.max(1, Math.abs(safeParseFloat(openTrade.Quantity)));
+                    // Each queue entry represents one contract, while proceeds and fees are totals for the trade.
+                    initialPutPremium += ((openProceeds + openCommFee) / contractsInOpeningTrade) * openRate;
                 }
 
                 const multiplier = instrumentMultipliers.get(trade.Symbol.trim()) || 100;
@@ -657,6 +764,8 @@ export function parseIbkrCsv(csvString: string): ParsedData {
         optionsStrategyMetrics: { winRate: 0, assignmentRate: 0, totalClosed: 0, wins: 0 },
         wheelCycleAnalysis: { completedCycles: [], pendingCycles: [] },
         monthlySummary: [],
+        weeklySummary: [],
+        dailyOptionsSummary: [],
         tickerPL: [],
         navChange: {
             startingValue: 0,
@@ -671,6 +780,13 @@ export function parseIbkrCsv(csvString: string): ParsedData {
             endingValue: 0,
         },
         shortPutIncomeSummary: { totalRealizedPL: 0, numberOfContracts: 0, averagePLPerContract: 0, hasData: false },
+        historyStatus: { source: 'csv', complete: true, warnings: [] },
+        marginLiquidity: {
+            netLiquidation: 0, totalCash: 0, availableFunds: 0, excessLiquidity: 0,
+            buyingPower: 0, maintenanceMargin: 0, initialMargin: 0, cushion: 0,
+        },
+        equityHistory: [],
+        premiumEfficiency: [],
     };
 
      // Process Statement for Period
@@ -1005,6 +1121,8 @@ export function parseIbkrCsv(csvString: string): ParsedData {
         sections['Cash Report'],
         data.exchangeRates
     );
+    data.dailyOptionsSummary = analyzeDailyOptionsSummary(sections['Trades'], data.exchangeRates);
+    data.weeklySummary = analyzeWeeklySummary(data.dailyOptionsSummary, sections['Trades'], sections['Interest'], sections['Fees'], data.exchangeRates);
 
     // --- P/L Contribution by Ticker ---
     const plByTicker = new Map<string, number>();

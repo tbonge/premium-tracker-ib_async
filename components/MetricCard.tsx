@@ -1,8 +1,9 @@
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ChevronDownIcon, ChevronUpIcon } from '../constants';
 import Tooltip from './Tooltip';
 import { useLocalization } from '../context/LocalizationContext';
+import SortableHeader, { compareSortValues, SortDirection } from './dashboard/SortableHeader';
 
 interface DetailRow {
     [key: string]: string | number;
@@ -23,10 +24,16 @@ interface MetricCardProps {
 
 const MetricCard: React.FC<MetricCardProps> = ({ title, value, icon, isPositive, description, details, tooltip }) => {
   const [isDetailsVisible, setIsDetailsVisible] = useState(false);
+  const [detailsSort, setDetailsSort] = useState<{ key: string; direction: SortDirection }>({ key: details?.headers[0] || '', direction: 'asc' });
   const { t } = useLocalization();
   const valueColor = isPositive === undefined ? 'text-brand-text-primary' : isPositive ? 'text-brand-success' : 'text-brand-danger';
 
   const detailsHeaders = details?.headers.map(headerKey => t(`dynamicHeaders.${headerKey}`));
+  const sortedDetailRows = useMemo(() => details ? [...details.rows].sort((a, b) => {
+    const result = compareSortValues(a[detailsSort.key], b[detailsSort.key]);
+    return detailsSort.direction === 'asc' ? result : -result;
+  }) : [], [details, detailsSort]);
+  const requestDetailsSort = (key: string) => setDetailsSort(current => ({ key, direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc' }));
 
   return (
     <div className="bg-brand-surface p-6 rounded-lg shadow-lg flex flex-col justify-between">
@@ -61,11 +68,11 @@ const MetricCard: React.FC<MetricCardProps> = ({ title, value, icon, isPositive,
                     <table className="w-full text-left">
                         <thead>
                             <tr className="border-b border-brand-card">
-                                {detailsHeaders?.map((header, idx) => <th key={header} className={`p-2 font-semibold text-brand-text-secondary ${idx > 0 ? 'text-right' : ''}`}>{header}</th>)}
+                                {detailsHeaders?.map((header, idx) => <SortableHeader key={header} column={details.headers[idx]} activeColumn={detailsSort.key} direction={detailsSort.direction} onSort={requestDetailsSort} align={idx > 0 ? 'right' : 'left'}>{header}</SortableHeader>)}
                             </tr>
                         </thead>
                         <tbody>
-                            {details.rows.map((row, index) => (
+                            {sortedDetailRows.map((row, index) => (
                                 <tr key={index} className="border-b border-brand-card last:border-b-0">
                                     {details.headers.map((header, idx) => <td key={header} className={`p-2 font-mono ${idx > 0 ? 'text-right' : ''}`}>{row[header]}</td>)}
                                 </tr>

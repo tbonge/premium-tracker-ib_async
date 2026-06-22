@@ -101,8 +101,8 @@ export const es = {
         },
         monthlyPerformance: {
             title: {
-                income: "Seguimiento de Ingresos Mensuales",
-                pl: "Seguimiento de P/G Mensuales"
+                income: "Seguimiento de Ingresos Semanales",
+                pl: "Seguimiento de P/G Semanales"
             },
             buttons: {
                 income: "Ingresos",
@@ -120,8 +120,15 @@ export const es = {
                 total: "Total"
             }
         },
+        dailyOptionsActivity: {
+            title: "Prima diaria Put/Call y P/G cerrado",
+            legend: {
+                premiumCollected: "Prima recaudada",
+                closedPL: "P/G cerrado"
+            }
+        },
         fees: {
-            title: "Desglose de Costos Mensuales",
+            title: "Desglose de Costos Semanales",
             legend: {
                 commissions: "Comisiones",
                 otherFees: "Otras Tasas",

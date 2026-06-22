@@ -101,8 +101,8 @@ export const cs = {
         },
         monthlyPerformance: {
             title: {
-                income: "Měsíční sledování příjmů",
-                pl: "Měsíční sledování Z/Z"
+                income: "Týdenní sledování příjmů",
+                pl: "Týdenní sledování Z/Z"
             },
             buttons: {
                 income: "Příjmy",
@@ -120,8 +120,15 @@ export const cs = {
                 total: "Celkem"
             }
         },
+        dailyOptionsActivity: {
+            title: "Denní prémie Put/Call a uzavřený Z/Z",
+            legend: {
+                premiumCollected: "Vybrané prémie",
+                closedPL: "Uzavřený Z/Z"
+            }
+        },
         fees: {
-            title: "Měsíční rozpis nákladů",
+            title: "Týdenní rozpis nákladů",
             legend: {
                 commissions: "Provize",
                 otherFees: "Ostatní poplatky",

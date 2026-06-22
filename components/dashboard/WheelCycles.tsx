@@ -12,8 +12,8 @@ interface WheelCyclesProps {
     baseCurrency: string;
 }
 
-type SortKeys = 'totalPL' | 'durationDays' | 'returnOnCost' | 'endDate';
-type PendingSortKeys = 'currentTotalPL' | 'startDate' | 'netAssignmentCost';
+type SortKeys = 'symbol' | 'startDate' | 'endDate' | 'durationDays' | 'totalCallPremium' | 'stockPL' | 'totalPL' | 'returnOnCost';
+type PendingSortKeys = 'symbol' | 'startDate' | 'netAssignmentCost' | 'totalCallPremium' | 'currentStockValue' | 'unrealizedStockPL' | 'currentTotalPL';
 
 
 const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInSelectedCurrency, formatCurrency }) => {
@@ -24,6 +24,19 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
 
     const [expandedCompletedRow, setExpandedCompletedRow] = useState<number | null>(null);
     const [expandedPendingRow, setExpandedPendingRow] = useState<number | null>(null);
+    const [logSort, setLogSort] = useState<{ key: 'date' | 'description' | 'amount'; direction: 'asc' | 'desc' }>({ key: 'date', direction: 'asc' });
+    const sortedTradeLog = (tradeLog: WheelCycle['tradeLog']) => [...tradeLog].sort((a, b) => {
+        const left = a[logSort.key];
+        const right = b[logSort.key];
+        const result = typeof left === 'number' && typeof right === 'number' ? left - right : String(left).localeCompare(String(right), undefined, { numeric: true });
+        return logSort.direction === 'asc' ? result : -result;
+    });
+    const requestLogSort = (key: 'date' | 'description' | 'amount') => setLogSort(current => ({ key, direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc' }));
+    const logHeader = (key: 'date' | 'description' | 'amount', label: string, right = false) => (
+        <th className={`p-1 cursor-pointer select-none text-brand-text-secondary ${right ? 'text-right' : 'text-left'}`} onClick={() => requestLogSort(key)}>
+            <span className="inline-flex items-center gap-1">{label}{logSort.key === key && (logSort.direction === 'asc' ? <ChevronUpIcon className="w-3 h-3" /> : <ChevronDownIcon className="w-3 h-3" />)}</span>
+        </th>
+    );
 
     const handleCompletedRowClick = (index: number) => {
         setExpandedCompletedRow(expandedCompletedRow === index ? null : index);
@@ -39,9 +52,9 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
             let aValue = a[completedSortConfig.key];
             let bValue = b[completedSortConfig.key];
             
-            if(completedSortConfig.key === 'endDate') {
-                aValue = new Date(a.endDate).getTime();
-                bValue = new Date(b.endDate).getTime();
+            if(completedSortConfig.key === 'endDate' || completedSortConfig.key === 'startDate') {
+                aValue = new Date(a[completedSortConfig.key]).getTime();
+                bValue = new Date(b[completedSortConfig.key]).getTime();
             }
 
             if (aValue < bValue) return completedSortConfig.direction === 'asc' ? -1 : 1;
@@ -104,23 +117,23 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
         }, { callPremium: 0, stockPL: 0, totalPL: 0 });
     }, [wheelCycleAnalysis.completedCycles]);
 
-    const SortableHeader: React.FC<{ sortKey: SortKeys; headerKey: string; tooltipKey: string; tooltipAlign?: 'center' | 'left' | 'right' }> = ({ sortKey, headerKey, tooltipKey, tooltipAlign }) => (
+    const SortableHeader: React.FC<{ sortKey: SortKeys; headerKey: string; tooltipKey?: string; tooltipAlign?: 'center' | 'left' | 'right'; align?: 'left' | 'right' }> = ({ sortKey, headerKey, tooltipKey, tooltipAlign, align = 'right' }) => (
         <th className="p-2 text-sm font-semibold text-brand-text-secondary uppercase cursor-pointer" onClick={() => requestSort(sortKey)}>
-            <div className="flex items-center justify-end">
-                <Tooltip content={t(tooltipKey)} align={tooltipAlign}>
+            <div className={`flex items-center ${align === 'right' ? 'justify-end' : ''}`}>
+                {tooltipKey ? <Tooltip content={t(tooltipKey)} align={tooltipAlign}>
                     <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t(headerKey)}</span>
-                </Tooltip>
+                </Tooltip> : <span>{t(headerKey)}</span>}
                 {completedSortConfig.key === sortKey && (completedSortConfig.direction === 'asc' ? <ChevronUpIcon className="w-4 h-4 ml-1" /> : <ChevronDownIcon className="w-4 h-4 ml-1" />)}
             </div>
         </th>
     );
 
-     const SortablePendingHeader: React.FC<{ sortKey: PendingSortKeys; headerKey: string; tooltipKey: string; align?: 'left' | 'right'; tooltipAlign?: 'center' | 'left' | 'right' }> = ({ sortKey, headerKey, tooltipKey, align = 'right', tooltipAlign }) => (
+     const SortablePendingHeader: React.FC<{ sortKey: PendingSortKeys; headerKey: string; tooltipKey?: string; align?: 'left' | 'right'; tooltipAlign?: 'center' | 'left' | 'right' }> = ({ sortKey, headerKey, tooltipKey, align = 'right', tooltipAlign }) => (
         <th className={`p-2 text-sm font-semibold text-brand-text-secondary uppercase cursor-pointer text-${align}`} onClick={() => requestPendingSort(sortKey)}>
             <div className={`flex items-center ${align === 'right' ? 'justify-end' : ''}`}>
-                <Tooltip content={t(tooltipKey)} align={tooltipAlign}>
+                {tooltipKey ? <Tooltip content={t(tooltipKey)} align={tooltipAlign}>
                     <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t(headerKey)}</span>
-                </Tooltip>
+                </Tooltip> : <span>{t(headerKey)}</span>}
                 {pendingSortConfig.key === sortKey && (pendingSortConfig.direction === 'asc' ? <ChevronUpIcon className="w-4 h-4 ml-1" /> : <ChevronDownIcon className="w-4 h-4 ml-1" />)}
             </div>
         </th>
@@ -141,12 +154,12 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
                         <table className="w-full text-left">
                             <thead>
                                 <tr className="border-b border-brand-card">
-                                    <th className="p-2 text-sm font-semibold text-brand-text-secondary uppercase">{t('dashboard.wheel.pending.headers.symbol')}</th>
+                                    <SortablePendingHeader sortKey="symbol" headerKey="dashboard.wheel.pending.headers.symbol" align="left" />
                                     <SortablePendingHeader sortKey="startDate" headerKey='dashboard.wheel.pending.headers.startDate' tooltipKey='dashboard.wheel.pending.tooltips.startDate' align="left" tooltipAlign="left" />
                                     <SortablePendingHeader sortKey="netAssignmentCost" headerKey='dashboard.wheel.pending.headers.netCostBasis' tooltipKey='dashboard.wheel.pending.tooltips.netCostBasis' />
-                                    <th className="p-2 text-sm font-semibold text-brand-text-secondary uppercase text-right">{t('dashboard.wheel.pending.headers.callPremium')}</th>
-                                    <th className="p-2 text-sm font-semibold text-brand-text-secondary uppercase text-right">{t('dashboard.wheel.pending.headers.currentValue')}</th>
-                                    <th className="p-2 text-sm font-semibold text-brand-text-secondary uppercase text-right">{t('dashboard.wheel.pending.headers.unrealizedStockPL')}</th>
+                                    <SortablePendingHeader sortKey="totalCallPremium" headerKey="dashboard.wheel.pending.headers.callPremium" />
+                                    <SortablePendingHeader sortKey="currentStockValue" headerKey="dashboard.wheel.pending.headers.currentValue" />
+                                    <SortablePendingHeader sortKey="unrealizedStockPL" headerKey="dashboard.wheel.pending.headers.unrealizedStockPL" />
                                     <SortablePendingHeader sortKey="currentTotalPL" headerKey='dashboard.wheel.pending.headers.currentTotalPL' tooltipKey='dashboard.wheel.pending.tooltips.currentTotalPL' tooltipAlign="right" />
                                 </tr>
                             </thead>
@@ -189,13 +202,13 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
                                                             <table className="w-full text-xs mt-2">
                                                                 <thead>
                                                                     <tr className="border-b border-brand-bg">
-                                                                        <th className="p-1 text-left text-brand-text-secondary">{t('dashboard.wheel.details.log.date')}</th>
-                                                                        <th className="p-1 text-left text-brand-text-secondary">{t('dashboard.wheel.details.log.description')}</th>
-                                                                        <th className="p-1 text-right text-brand-text-secondary">{t('dashboard.wheel.details.log.amount')}</th>
+                                                                        {logHeader('date', t('dashboard.wheel.details.log.date'))}
+                                                                        {logHeader('description', t('dashboard.wheel.details.log.description'))}
+                                                                        {logHeader('amount', t('dashboard.wheel.details.log.amount'), true)}
                                                                     </tr>
                                                                 </thead>
                                                                 <tbody>
-                                                                    {cycle.tradeLog.map((log, j) => (
+                                                                    {sortedTradeLog(cycle.tradeLog).map((log, j) => (
                                                                         <tr key={j} className="border-b border-brand-surface/50 last:border-0">
                                                                             <td className="p-1 font-mono">{log.date}</td>
                                                                             <td className="p-1">{log.description}</td>
@@ -239,12 +252,12 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
                         <table className="w-full text-left">
                             <thead>
                                 <tr className="border-b border-brand-card">
-                                    <th className="p-2 text-sm font-semibold text-brand-text-secondary uppercase">{t('dashboard.wheel.completed.headers.symbol')}</th>
-                                    <th className="p-2 text-sm font-semibold text-brand-text-secondary uppercase">{t('dashboard.wheel.completed.headers.startDate')}</th>
+                                    <SortableHeader sortKey="symbol" headerKey="dashboard.wheel.completed.headers.symbol" align="left" />
+                                    <SortableHeader sortKey="startDate" headerKey="dashboard.wheel.completed.headers.startDate" align="left" />
                                     <SortableHeader sortKey="endDate" headerKey='dashboard.wheel.completed.headers.endDate' tooltipKey='dashboard.wheel.completed.tooltips.endDate' />
                                     <SortableHeader sortKey="durationDays" headerKey='dashboard.wheel.completed.headers.duration' tooltipKey='dashboard.wheel.completed.tooltips.duration' />
-                                    <th className="p-2 text-sm font-semibold text-brand-text-secondary uppercase text-right">{t('dashboard.wheel.completed.headers.callPremium')}</th>
-                                    <th className="p-2 text-sm font-semibold text-brand-text-secondary uppercase text-right">{t('dashboard.wheel.completed.headers.stockPL')}</th>
+                                    <SortableHeader sortKey="totalCallPremium" headerKey="dashboard.wheel.completed.headers.callPremium" />
+                                    <SortableHeader sortKey="stockPL" headerKey="dashboard.wheel.completed.headers.stockPL" />
                                     <SortableHeader sortKey="totalPL" headerKey='dashboard.wheel.completed.headers.totalPL' tooltipKey='dashboard.wheel.completed.tooltips.totalPL' />
                                     <SortableHeader sortKey="returnOnCost" headerKey='dashboard.wheel.completed.headers.returnOnCost' tooltipKey='dashboard.wheel.completed.tooltips.returnOnCost' tooltipAlign="right" />
                                 </tr>
@@ -295,13 +308,13 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
                                                             <table className="w-full text-xs mt-2">
                                                                 <thead>
                                                                     <tr className="border-b border-brand-bg">
-                                                                        <th className="p-1 text-left text-brand-text-secondary">{t('dashboard.wheel.details.log.date')}</th>
-                                                                        <th className="p-1 text-left text-brand-text-secondary">{t('dashboard.wheel.details.log.description')}</th>
-                                                                        <th className="p-1 text-right text-brand-text-secondary">{t('dashboard.wheel.details.log.amount')}</th>
+                                                                        {logHeader('date', t('dashboard.wheel.details.log.date'))}
+                                                                        {logHeader('description', t('dashboard.wheel.details.log.description'))}
+                                                                        {logHeader('amount', t('dashboard.wheel.details.log.amount'), true)}
                                                                     </tr>
                                                                 </thead>
                                                                 <tbody>
-                                                                    {cycle.tradeLog.map((log, j) => (
+                                                                    {sortedTradeLog(cycle.tradeLog).map((log, j) => (
                                                                         <tr key={j} className="border-b border-brand-surface/50 last:border-0">
                                                                             <td className="p-1 font-mono">{log.date}</td>
                                                                             <td className="p-1">{log.description}</td>

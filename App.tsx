@@ -1,13 +1,104 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { ParsedData } from './types';
+import { DailyOptionsSummary, ParsedData, WeeklySummary } from './types';
 import { parseIbkrCsv } from './services/csvParser';
 import FileUpload from './components/FileUpload';
 import Dashboard from './components/Dashboard';
+import LabsDashboard from './components/LabsDashboard';
 import { LoaderIcon, AlertTriangleIcon } from './constants';
 import { useLocalization } from './context/LocalizationContext';
 
+const parseDateKey = (dateKey: string): Date => new Date(`${dateKey}T00:00:00`);
+
+const formatDateKey = (date: Date): string => {
+  return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
+};
+
+const getLatestDateKey = (items: DailyOptionsSummary[]): string | null => {
+  if (!items.length) {
+    return null;
+  }
+
+  return items.reduce((latest, item) => item.date > latest ? item.date : latest, items[0].date);
+};
+
+const getLatestActiveDateKey = (items: DailyOptionsSummary[]): string | null => {
+  const activeItems = items.filter(item => item.premiumCollected !== 0 || item.closedPL !== 0);
+  return getLatestDateKey(activeItems);
+};
+
+const getWeekKey = (dateKey: string): string => {
+  const date = parseDateKey(dateKey);
+  date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+  return formatDateKey(date);
+};
+
+const mergeWeeklyOptionsSummary = (
+  statementWeekly: WeeklySummary[] = [],
+  statementDaily: DailyOptionsSummary[] = [],
+  mergedDaily: DailyOptionsSummary[] = []
+): WeeklySummary[] => {
+  const latestStatementDay = getLatestActiveDateKey(statementDaily);
+  const byWeek = new Map(statementWeekly.map(row => [row.week, { ...row }]));
+  if (!latestStatementDay) return [...byWeek.values()].sort((a, b) => a.week.localeCompare(b.week));
+  mergedDaily.filter(row => row.date > latestStatementDay).forEach(row => {
+    const week = getWeekKey(row.date);
+    const bucket = byWeek.get(week) || { week, optionsPL: 0, optionsPremium: 0, stocksPL: 0, forexPL: 0, syepIncome: 0, interest: 0, interestPaid: 0, commissions: 0, fees: 0, salesTax: 0 };
+    bucket.optionsPremium += row.premiumCollected;
+    bucket.optionsPL += row.closedPL;
+    byWeek.set(week, bucket);
+  });
+  return [...byWeek.values()].sort((a, b) => a.week.localeCompare(b.week));
+};
+
+const mergeDailyOptionsSummary = (
+  statementSummary: DailyOptionsSummary[] = [],
+  liveSummary: DailyOptionsSummary[] = []
+): DailyOptionsSummary[] => {
+  if (statementSummary.length === 0) {
+    return liveSummary;
+  }
+
+  if (liveSummary.length === 0) {
+    return statementSummary;
+  }
+
+  const statementLatestDate = getLatestDateKey(statementSummary);
+  const liveLatestActiveDate = getLatestActiveDateKey(liveSummary);
+  if (!statementLatestDate || !liveLatestActiveDate || liveLatestActiveDate <= statementLatestDate) {
+    return statementSummary;
+  }
+
+  const mergedByDate = new Map<string, DailyOptionsSummary>();
+  statementSummary.forEach(item => {
+    mergedByDate.set(item.date, { ...item });
+  });
+
+  liveSummary
+    .filter(item => item.date > statementLatestDate)
+    .forEach(item => {
+      mergedByDate.set(item.date, { ...item });
+    });
+
+  const endDate = parseDateKey(liveLatestActiveDate);
+  const startDate = new Date(endDate);
+  startDate.setDate(startDate.getDate() - 29);
+
+  const mergedWindow: DailyOptionsSummary[] = [];
+  for (let i = 0; i < 30; i++) {
+    const date = new Date(startDate);
+    date.setDate(startDate.getDate() + i);
+    const key = formatDateKey(date);
+    mergedWindow.push(mergedByDate.get(key) || { date: key, premiumCollected: 0, closedPL: 0 });
+  }
+
+  return mergedWindow;
+};
+
 const App: React.FC = () => {
+  const [dashboardMode, setDashboardMode] = useState<'classic' | 'labs'>(() =>
+    window.location.pathname.replace(/\/+$/, '') === '/labs' ? 'labs' : 'classic'
+  );
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [parsedData, setParsedData] = useState<ParsedData | null>(null);
   const [statementData, setStatementData] = useState<ParsedData | null>(null);
@@ -19,6 +110,19 @@ const App: React.FC = () => {
   useEffect(() => {
     document.title = t('app.title');
   }, [t]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setDashboardMode(window.location.pathname.replace(/\/+$/, '') === '/labs' ? 'labs' : 'classic');
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const switchDashboard = useCallback((mode: 'classic' | 'labs') => {
+    window.history.pushState({}, '', mode === 'labs' ? '/labs' : '/');
+    setDashboardMode(mode);
+  }, []);
 
   const handleFileChange = useCallback((file: File) => {
     setIsLoading(true);
@@ -59,6 +163,33 @@ const App: React.FC = () => {
       setParsedData(payload as ParsedData);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('app.errors.ibGateway'));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [t]);
+
+  const handleFlexLoad = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    setFileContent(null);
+    setParsedData(null);
+    setStatementData(null);
+
+    try {
+      const response = await fetch('/api/ib/flex', { method: 'POST' });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error || t('app.errors.flexQuery'));
+      }
+
+      if (!payload.accountInfo || !payload.nav || !Array.isArray(payload.monthlySummary)) {
+        throw new Error(t('app.errors.flexQueryInvalid'));
+      }
+
+      setParsedData(payload as ParsedData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('app.errors.flexQuery'));
     } finally {
       setIsLoading(false);
     }
@@ -112,6 +243,7 @@ const App: React.FC = () => {
     }
 
     const hasLiveAccountState = liveData.totalNAV > 0 || liveData.positions.length > 0 || liveData.nav.cash !== 0;
+    const mergedDailyOptions = mergeDailyOptionsSummary(statementData.dailyOptionsSummary, liveData.dailyOptionsSummary);
 
     return {
       ...statementData,
@@ -131,6 +263,9 @@ const App: React.FC = () => {
       totalNAV: liveData.totalNAV || statementData.totalNAV,
       navChange,
       syepIncome: statementData.syepIncome,
+      dailyOptionsSummary: mergedDailyOptions,
+      weeklySummary: mergeWeeklyOptionsSummary(statementData.weeklySummary, statementData.dailyOptionsSummary, mergedDailyOptions),
+      marginLiquidity: liveData.marginLiquidity || statementData.marginLiquidity,
     };
   }, []);
 
@@ -257,10 +392,21 @@ const App: React.FC = () => {
     }
     
     if (parsedData) {
+      if (dashboardMode === 'labs') {
+        return (
+          <LabsDashboard
+            data={parsedData}
+            onReset={handleReset}
+            onRefreshData={handleRefreshData}
+            isRefreshing={isRefreshing}
+            onSwitchToClassic={() => switchDashboard('classic')}
+          />
+        );
+      }
       return <Dashboard data={parsedData} onReset={handleReset} onRefreshData={handleRefreshData} isRefreshing={isRefreshing} />;
     }
 
-    return <FileUpload onFileSelect={handleFileChange} onLiveLoad={handleLiveLoad} />;
+    return <FileUpload onFileSelect={handleFileChange} onLiveLoad={handleLiveLoad} onFlexLoad={handleFlexLoad} />;
   };
 
   return (

@@ -9,7 +9,9 @@ export const en = {
             criticalData: "Could not parse critical data from the file. Please ensure it's a valid IBKR activity statement.",
             unknownParse: "An unknown parsing error occurred.",
             ibGateway: "Failed to load live data from IB Gateway.",
-            ibGatewayInvalid: "IB Gateway returned an unexpected data shape."
+            ibGatewayInvalid: "IB Gateway returned an unexpected data shape.",
+            flexQuery: "Failed to load Flex Query history.",
+            flexQueryInvalid: "Flex Query returned an unexpected data shape."
         }
     },
     fileUpload: {
@@ -18,7 +20,11 @@ export const en = {
         description: "Turn your Interactive Brokers activity statement into a powerful decision-making tool. Get a crystal-clear view of your performance, specializing in options selling and the wheel strategy. Our dashboard helps you visualize your gains, manage portfolio risk, and trade on margin with confidence.",
         liveLoad: {
             button: "Load from IB Gateway",
-            description: "Pull a live snapshot from a local IB Gateway or TWS session on 127.0.0.1:4001 using ib_async. Historical statement analytics still require a CSV."
+            description: "Pull a live snapshot from a local IB Gateway or TWS session on 127.0.0.1:4001 using ib_async. If Flex credentials are configured, historical Flex data is merged in."
+        },
+        flexLoad: {
+            button: "Load Flex History",
+            description: "Load historical statement data from IBKR Flex Web Service only. This works without IB Gateway when IB_FLEX_TOKEN and IB_FLEX_QUERY_ID were set before starting Vite."
         },
         dropzone: {
             dragAndDrop: "Drag and drop",
@@ -62,6 +68,53 @@ export const en = {
         }
     },
     dashboard: {
+        marginRisk: {
+            title: "Margin & Liquidity Risk",
+            description: "Live IB Gateway account capacity, including a stress estimate after likely put assignments.",
+            availableFunds: "Available Funds", excessLiquidity: "Excess Liquidity", buyingPower: "Buying Power",
+            maintenanceMargin: "Maintenance Margin", initialMargin: "Initial Margin", marginUsage: "Margin / NAV",
+            postAssignment: "Funds After Likely Assignment", cashAfterAssignment: "Cash After Likely Assignment",
+            marginLoanAfterAssignment: "Margin Loan After Likely Assignment"
+        },
+        expirationCalendar: {
+            title: "Expiration Calendar", expiry: "Expiration", tickers: "Tickers", puts: "Short Puts",
+            calls: "Short Calls", assignmentExposure: "Put Assignment Exposure", premium: "Premium"
+        },
+        navHistory: { title: "NAV & Drawdown History", change: "Period Change", maxDrawdown: "Max Drawdown" },
+        wheelTimeline: {
+            title: "Wheel Position Timeline", date: "Date", symbol: "Symbol", status: "Cycle Status",
+            event: "Event", amount: "Cash Flow", pending: "Pending", completed: "Completed"
+        },
+        premiumEfficiency: {
+            title: "Premium Efficiency by Ticker",
+            description: "Premium and realized option results relative to cumulative short-put capital opened during the Flex period.",
+            symbol: "Symbol", premium: "Premium", realized: "Realized P/L", commissions: "Commissions",
+            putCapital: "Put Capital Opened", premiumYield: "Premium / Capital", realizedReturn: "Realized / Capital",
+            avgDays: "Avg Put Days", trades: "Opening Trades"
+        },
+        historyStatus: {
+            title: "Historical data is incomplete",
+            description: "Current Gateway data loaded successfully, but historical analytics require a configured Flex Query with the required sections."
+        },
+        arocDetails: {
+            title: "Annualized ROC Trade Details",
+            description: "Closed short-put trades behind the average annualized return on capital.",
+            capitalAtRisk: "Capital at Risk"
+        },
+        assignedPuts: {
+            title: "Assigned Put Positions - Covered Call Planning",
+            description: "Assigned shares, effective breakeven, live price, and call coverage available for choosing a covered-call strike and expiration.",
+            symbol: "Symbol",
+            assigned: "Assigned",
+            shares: "Shares",
+            availableShares: "Shares Available",
+            assignmentPrice: "Assignment Price",
+            breakeven: "Wheel Breakeven / Share",
+            currentPrice: "Current Price",
+            daysHeld: "Days Held",
+            callPremium: "Call Premium",
+            totalPL: "Total P/L"
+        },
         header: {
             title: "Portfolio Dashboard",
             refreshData: "Refresh Data",
@@ -109,8 +162,8 @@ export const en = {
         },
         monthlyPerformance: {
             title: {
-                income: "Monthly Income Tracker",
-                pl: "Monthly P/L Tracker"
+                income: "Weekly Income Tracker",
+                pl: "Weekly P/L Tracker"
             },
             buttons: {
                 income: "Income",
@@ -128,8 +181,16 @@ export const en = {
                 total: "Total"
             }
         },
+        dailyOptionsActivity: {
+            title: "Daily Put/Call Premium & Closed P/L",
+            legend: {
+                premiumCollected: "Premium Collected",
+                closedPL: "Closed Profit",
+                closedLoss: "Closed Loss"
+            }
+        },
         fees: {
-            title: "Monthly Costs Breakdown",
+            title: "Weekly Costs Breakdown",
             legend: {
                 commissions: "Commissions",
                 otherFees: "Other Fees",

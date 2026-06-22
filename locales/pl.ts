@@ -101,8 +101,8 @@ export const pl = {
         },
         monthlyPerformance: {
             title: {
-                income: "Miesięczny Monitor Dochodów",
-                pl: "Miesięczny Monitor Z/S"
+                income: "Tygodniowy Monitor Dochodów",
+                pl: "Tygodniowy Monitor Z/S"
             },
             buttons: {
                 income: "Dochód",
@@ -120,8 +120,15 @@ export const pl = {
                 total: "Suma"
             }
         },
+        dailyOptionsActivity: {
+            title: "Dzienne premie Put/Call i zamknięty Z/S",
+            legend: {
+                premiumCollected: "Zebrana premia",
+                closedPL: "Zamknięty Z/S"
+            }
+        },
         fees: {
-            title: "Miesięczny Podział Kosztów",
+            title: "Tygodniowy Podział Kosztów",
             legend: {
                 commissions: "Prowizje",
                 otherFees: "Inne Opłaty",

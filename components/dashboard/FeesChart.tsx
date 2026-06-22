@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { MonthlySummary } from '../../types';
+import { WeeklySummary } from '../../types';
 import { useLocalization } from '../../context/LocalizationContext';
 
 interface FeesChartProps {
-    data: MonthlySummary[];
+    data: WeeklySummary[];
     formatInSelectedCurrency: (value: number) => string;
 }
 
@@ -28,14 +28,10 @@ const FeesChart: React.FC<FeesChartProps> = ({ data, formatInSelectedCurrency })
         return null;
     }
     
-    const chartData = filteredData.map(item => {
-        const [year, month] = item.month.split('-');
-        const date = new Date(parseInt(year, 10), parseInt(month, 10) - 1);
-        return {
-            ...item,
-            month: date.toLocaleString(locale, { month: 'short', year: '2-digit' })
-        };
-    });
+    const chartData = filteredData.map(item => ({
+        ...item,
+        weekLabel: new Date(`${item.week}T00:00:00`).toLocaleDateString(locale, { month: 'short', day: 'numeric' }),
+    }));
 
     const CustomTooltip = ({ active, payload, label }: any) => {
         if (active && payload && payload.length) {
@@ -65,7 +61,7 @@ const FeesChart: React.FC<FeesChartProps> = ({ data, formatInSelectedCurrency })
             <ResponsiveContainer width="100%" height={400}>
                 <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#4a5568" />
-                    <XAxis dataKey="month" stroke="#a0aec0" />
+                    <XAxis dataKey="weekLabel" stroke="#a0aec0" minTickGap={20} />
                     <YAxis stroke="#a0aec0" tickFormatter={(value) => formatInSelectedCurrency(value).replace(/(\.00|,[0-9]{2})$/, '')} />
                     <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(113, 128, 150, 0.1)' }}/>
                     <Legend wrapperStyle={{ color: '#edf2f7' }} onClick={handleLegendClick} />

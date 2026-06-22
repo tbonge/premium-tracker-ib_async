@@ -1,10 +1,12 @@
 
-import React from 'react';
+import React, { useCallback } from 'react';
 import MetricCard from '../MetricCard';
 import { WarningIcon, MoneyIcon, CheckCircleIcon, InfoIcon } from '../../constants';
 import { useLocalization } from '../../context/LocalizationContext';
 import { Position } from '../../types';
 import Tooltip from '../Tooltip';
+import SortableHeader from './SortableHeader';
+import { useSortableRows } from './useSortableRows';
 
 interface ShortfallDetails {
     headers: string[];
@@ -46,16 +48,10 @@ const ShortPutRisk: React.FC<ShortPutRiskProps> = ({
     formatCurrency
 }) => {
     const { t } = useLocalization();
-    const sortedLikelyAssignments = [...likelyAssignments].sort((a, b) => {
-        const expiryA = a.expiry ? new Date(a.expiry).getTime() : Number.MAX_SAFE_INTEGER;
-        const expiryB = b.expiry ? new Date(b.expiry).getTime() : Number.MAX_SAFE_INTEGER;
-
-        if (expiryA !== expiryB) {
-            return expiryA - expiryB;
-        }
-
-        return a.symbol.localeCompare(b.symbol);
-    });
+    type SortKey = 'expiry' | 'symbol' | 'quantity' | 'strikePrice' | 'breakevenPrice' | 'stockPrice' | 'dte' | 'collectedPremium' | 'unrealizedPL' | 'assignmentCost';
+    const sortValue = useCallback((row: AssignmentRiskPosition, key: SortKey) => row[key], []);
+    const { sortedRows: sortedLikelyAssignments, sort, requestSort } = useSortableRows(likelyAssignments, 'expiry' as SortKey, sortValue);
+    const header = (key: SortKey, label: React.ReactNode, right = true) => <SortableHeader column={key} activeColumn={sort.key} direction={sort.direction} onSort={requestSort} align={right ? 'right' : 'left'}>{label}</SortableHeader>;
 
     return (
     <div className="bg-brand-surface rounded-lg shadow-lg p-6 mb-8">
@@ -127,36 +123,31 @@ const ShortPutRisk: React.FC<ShortPutRiskProps> = ({
                     <table className="w-full text-left">
                         <thead>
                             <tr className="border-b border-brand-card">
-                                <th className="p-2">{t('dashboard.putRisk.atRiskPositions.assignmentDate')}</th>
-                                <th className="p-2">{t('dashboard.openPositions.puts.symbol')}</th>
-                                <th className="p-2 text-right">{t('dashboard.openPositions.puts.qty')}</th>
-                                <th className="p-2 text-right">{t('dashboard.openPositions.puts.strike')}</th>
-                                <th className="p-2 text-right">
+                                {header('expiry', t('dashboard.putRisk.atRiskPositions.assignmentDate'), false)}
+                                {header('symbol', t('dashboard.openPositions.puts.symbol'), false)}
+                                {header('quantity', t('dashboard.openPositions.puts.qty'))}
+                                {header('strikePrice', t('dashboard.openPositions.puts.strike'))}
+                                {header('breakevenPrice',
                                     <Tooltip content={t('dashboard.openPositions.puts.breakevenTooltip')}>
                                         <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.puts.breakeven')}</span>
-                                    </Tooltip>
-                                </th>
-                                <th className="p-2 text-right">
+                                    </Tooltip>)}
+                                {header('stockPrice',
                                     <Tooltip content={t('dashboard.putRisk.atRiskPositions.currentPriceTooltip')}>
                                         <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.putRisk.atRiskPositions.currentPrice')}</span>
-                                    </Tooltip>
-                                </th>
-                                <th className="p-2 text-right">
+                                    </Tooltip>)}
+                                {header('dte',
                                     <Tooltip content={t('dashboard.openPositions.puts.dteTooltip')}>
                                         <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.puts.dte')}</span>
-                                    </Tooltip>
-                                </th>
-                                <th className="p-2 text-right">
+                                    </Tooltip>)}
+                                {header('collectedPremium',
                                     <Tooltip content={t('dashboard.openPositions.puts.premiumTooltip')}>
                                         <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.puts.premium')}</span>
-                                    </Tooltip>
-                                </th>
-                                <th className="p-2 text-right">{t('dashboard.openPositions.puts.unrealizedPL')}</th>
-                                <th className="p-2 text-right">
+                                    </Tooltip>)}
+                                {header('unrealizedPL', t('dashboard.openPositions.puts.unrealizedPL'))}
+                                {header('assignmentCost',
                                     <Tooltip align="right" content={t('dashboard.openPositions.puts.assignmentCostTooltip')}>
                                         <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.puts.assignmentCost')}</span>
-                                    </Tooltip>
-                                </th>
+                                    </Tooltip>)}
                             </tr>
                         </thead>
                         <tbody>

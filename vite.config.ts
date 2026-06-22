@@ -100,6 +100,32 @@ export default defineConfig(({ mode }) => {
           ], res);
         });
 
+        server.middlewares.use('/api/ib/flex', (req, res) => {
+          if (req.method !== 'POST') {
+            res.statusCode = 405;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Method not allowed' }));
+            return;
+          }
+
+          const flexToken = env.IB_FLEX_TOKEN || process.env.IB_FLEX_TOKEN || '';
+          const flexQueryId = env.IB_FLEX_QUERY_ID || process.env.IB_FLEX_QUERY_ID || '';
+          if (!flexToken || !flexQueryId) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Set both IB_FLEX_TOKEN and IB_FLEX_QUERY_ID before starting Vite.' }));
+            return;
+          }
+
+          const scriptPath = path.resolve(__dirname, 'scripts', 'load_ib_gateway.py');
+          runPython([
+            scriptPath,
+            '--flex-only',
+            '--flex-token', flexToken,
+            '--flex-query-id', flexQueryId
+          ], res);
+        });
+
         server.middlewares.use('/api/ib/underlying-prices', (req, res) => {
           if (req.method !== 'POST') {
             res.statusCode = 405;

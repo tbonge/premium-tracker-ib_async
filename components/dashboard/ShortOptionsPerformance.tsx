@@ -1,6 +1,6 @@
 
 
-import React, { useMemo } from 'react';
+import React from 'react';
 import MetricCard from '../MetricCard';
 import { InfoIcon, GiftIcon, TrendingUpIcon, CheckCircleIcon, RepeatIcon, MoneyIcon } from '../../constants';
 import { ArocAnalysis, OptionsStrategyMetrics, ShortPutIncomeSummary } from '../../types';
@@ -36,23 +36,6 @@ const ShortOptionsPerformance: React.FC<ShortOptionsPerformanceProps> = ({
 }) => {
     const { t, locale } = useLocalization();
     
-    const arocDetails = useMemo(() => {
-        if (!arocAnalysis || arocAnalysis.trades.length === 0) return undefined;
-    
-        const sortedTrades = [...arocAnalysis.trades].sort((a, b) => b.aroc - a.aroc);
-        const headers = ['symbol', 'daysOpen', 'premium', 'aroc'];
-        
-        return {
-            headers: headers,
-            rows: sortedTrades.map(trade => ({
-                symbol: trade.symbol,
-                daysOpen: trade.daysOpen,
-                premium: formatInSelectedCurrency(trade.premiumCollected),
-                aroc: trade.aroc.toLocaleString(locale, { style: 'percent', minimumFractionDigits: 2 })
-            }))
-        };
-    }, [arocAnalysis, formatInSelectedCurrency, locale]);
-
     const hasSyep = syepIncome !== undefined && syepIncome > 0;
     const hasAroc = arocAnalysis && arocAnalysis.trades.length > 0;
 
@@ -159,7 +142,6 @@ const ShortOptionsPerformance: React.FC<ShortOptionsPerformanceProps> = ({
                             icon={<TrendingUpIcon />}
                             isPositive={arocAnalysis.averageAroc >= 0}
                             description={t('dashboard.shortOptionsStrategy.closedPuts.avgAroc.description')}
-                            details={arocDetails}
                             tooltip={t('dashboard.shortOptionsStrategy.closedPuts.avgAroc.tooltip')}
                         />
                     )}

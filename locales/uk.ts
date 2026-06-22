@@ -101,8 +101,8 @@ export const uk = {
         },
         monthlyPerformance: {
             title: {
-                income: "Щомісячний трекер доходів",
-                pl: "Щомісячний трекер П/З"
+                income: "Щотижневий трекер доходів",
+                pl: "Щотижневий трекер П/З"
             },
             buttons: {
                 income: "Дохід",
@@ -120,8 +120,15 @@ export const uk = {
                 total: "Всього"
             }
         },
+        dailyOptionsActivity: {
+            title: "Щоденна премія Put/Call і закритий П/З",
+            legend: {
+                premiumCollected: "Отримана премія",
+                closedPL: "Закритий П/З"
+            }
+        },
         fees: {
-            title: "Щомісячна розбивка витрат",
+            title: "Щотижнева розбивка витрат",
             legend: {
                 commissions: "Комісії",
                 otherFees: "Інші збори",

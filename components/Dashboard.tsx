@@ -5,10 +5,9 @@ import { ParsedData, Position } from '../types';
 import Header from './dashboard/Header';
 import MetricCards from './dashboard/MetricCards';
 import PLSummary from './dashboard/PLSummary';
-import NAVSankeyChart from './dashboard/NAVSankeyChart';
 import MonthlyPerformanceChart from './dashboard/MonthlyIncomeChart';
+import DailyOptionsActivityChart from './dashboard/DailyOptionsActivityChart';
 import FeesChart from './dashboard/FeesChart';
-import TickerPLChart from './dashboard/TickerPLChart';
 import ShortPutRisk from './dashboard/ShortPutRisk';
 import ShortOptionsPerformance from './dashboard/ShortOptionsPerformance';
 import AllocationCharts from './dashboard/AllocationCharts';
@@ -16,9 +15,18 @@ import OpenPositions from './dashboard/OpenPositions';
 import ClosedPositions from './dashboard/ClosedPositions';
 import WheelStrategySummary from './dashboard/WheelStrategySummary';
 import WheelCycles from './dashboard/WheelCycles';
+import ArocTradeDetails from './dashboard/ArocTradeDetails';
+import AssignedPutPositions from './dashboard/AssignedPutPositions';
 import Footer from './Footer';
 import PublicDashboard from './dashboard/PublicDashboard';
 import { useLocalization } from '../context/LocalizationContext';
+import { WarningIcon } from '../constants';
+import MarginLiquidityRisk from './dashboard/MarginLiquidityRisk';
+import ExpirationCalendar from './dashboard/ExpirationCalendar';
+import NAVDrawdownHistory from './dashboard/NAVDrawdownHistory';
+import WheelPositionTimeline from './dashboard/WheelPositionTimeline';
+import PremiumEfficiency from './dashboard/PremiumEfficiency';
+import { calendarDte } from '../utils/dates';
 
 interface DashboardProps {
   data: ParsedData;
@@ -30,7 +38,7 @@ interface DashboardProps {
 const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isRefreshing }) => {
     const { locale } = useLocalization();
     const [view, setView] = useState<'private' | 'public'>('private');
-    const [selectedCurrency, setSelectedCurrency] = useState<string>(data.nav.baseCurrency);
+    const [selectedCurrency, setSelectedCurrency] = useState<string>(data.exchangeRates.USD ? 'USD' : data.nav.baseCurrency);
     const [allocationFilters, setAllocationFilters] = useState({ stocks: true, puts: true, calls: true });
 
     const formatCurrency = useMemo(() => (value: number, currency: string) => {
@@ -76,8 +84,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                 const exchangeRate = data.exchangeRates[p.currency] || 1;
                 const stockPrice = stockPriceMap.get(p.baseSymbol);
                 
-                const expiryDate = p.expiry ? new Date(p.expiry) : null;
-                const dte = expiryDate ? Math.round((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)) : undefined;
+                const dte = calendarDte(p.expiry, today);
 
                 const moneyness = (stockPrice !== undefined && p.strikePrice) ? (stockPrice - p.strikePrice) / p.strikePrice : undefined;
 
@@ -119,8 +126,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
             .map(p => {
                 const stockPrice = stockPriceMap.get(p.baseSymbol);
                 
-                const expiryDate = p.expiry ? new Date(p.expiry) : null;
-                const dte = expiryDate ? Math.max(0, Math.round((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))) : undefined;
+                const dte = calendarDte(p.expiry, today);
 
                 const moneyness = (stockPrice !== undefined && p.strikePrice) ? (stockPrice - p.strikePrice) / p.strikePrice : undefined;
 
@@ -399,19 +405,32 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                 shortPutLeverage={dashboardData.shortPutLeverage}
                 shortPutLeverageCash={dashboardData.shortPutLeverageCash}
             />
+            {data.historyStatus && !data.historyStatus.complete && (
+                <div className="mb-8 rounded-md border border-brand-danger/40 bg-brand-danger/10 p-4" role="status">
+                    <div className="flex items-start gap-3">
+                        <WarningIcon className="mt-0.5 shrink-0 text-brand-danger" />
+                        <div>
+                            <h2 className="font-semibold text-brand-danger">{t('dashboard.historyStatus.title')}</h2>
+                            <p className="mt-1 text-sm text-brand-text-secondary">{t('dashboard.historyStatus.description')}</p>
+                            {data.historyStatus.warnings.map((warning, index) => <p key={index} className="mt-2 text-sm text-brand-text-primary">{warning}</p>)}
+                        </div>
+                    </div>
+                </div>
+            )}
+            <MarginLiquidityRisk data={data.marginLiquidity} likelyAssignmentValue={dashboardData.likelyAssignmentValue} formatCurrency={formatInSelectedCurrency} />
             <PLSummary plSummary={data.plSummary} valueFormatter={formatInSelectedCurrency} />
-            <NAVSankeyChart navChange={data.navChange} formatInSelectedCurrency={formatInSelectedCurrency} />
-            <TickerPLChart 
-                data={data.tickerPL} 
-                formatInSelectedCurrency={formatInSelectedCurrency} 
-            />
+            <NAVDrawdownHistory data={data.equityHistory} formatCurrency={formatInSelectedCurrency} />
             <MonthlyPerformanceChart 
-                data={data.monthlySummary}
+                data={data.weeklySummary}
                 valueFormatter={(value) => formatInSelectedCurrency(value).replace(/(\.00|,[0-9]{2})$/, '')}
                 tooltipValueFormatter={formatInSelectedCurrency}
             />
+            <DailyOptionsActivityChart
+                data={data.dailyOptionsSummary}
+                valueFormatter={formatInSelectedCurrency}
+            />
             <FeesChart 
-                data={data.monthlySummary}
+                data={data.weeklySummary}
                 formatInSelectedCurrency={formatInSelectedCurrency}
             />
             <ShortPutRisk 
@@ -426,6 +445,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                 formatInSelectedCurrency={formatInSelectedCurrency}
                 formatCurrency={formatCurrency}
             />
+            <ExpirationCalendar positions={data.positions} exchangeRates={data.exchangeRates} formatCurrency={formatInSelectedCurrency} />
             <ShortOptionsPerformance 
                 shortPutPerformance={dashboardData.shortPutPerformance}
                 shortCallPerformance={dashboardData.shortCallPerformance}
@@ -435,6 +455,15 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                 optionsStrategyMetrics={data.optionsStrategyMetrics}
                 shortPutIncomeSummary={data.shortPutIncomeSummary}
                 formatInSelectedCurrency={formatInSelectedCurrency}
+            />
+            <ArocTradeDetails analysis={data.arocAnalysis} formatInSelectedCurrency={formatInSelectedCurrency} />
+            <PremiumEfficiency data={data.premiumEfficiency} formatCurrency={formatInSelectedCurrency} />
+            <AssignedPutPositions
+                cycles={data.wheelCycleAnalysis.pendingCycles}
+                positions={data.positions}
+                exchangeRates={data.exchangeRates}
+                formatInSelectedCurrency={formatInSelectedCurrency}
+                formatCurrency={formatCurrency}
             />
             <AllocationCharts
                 portfolioAllocation={dashboardData.portfolioAllocation}
@@ -461,6 +490,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                 wheelCycleAnalysis={data.wheelCycleAnalysis}
                 formatInSelectedCurrency={formatInSelectedCurrency}
             />
+            <WheelPositionTimeline analysis={data.wheelCycleAnalysis} formatCurrency={formatInSelectedCurrency} />
             <WheelCycles 
                 wheelCycleAnalysis={data.wheelCycleAnalysis}
                 formatInSelectedCurrency={formatInSelectedCurrency}

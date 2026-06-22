@@ -1,9 +1,11 @@
 
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { ClosedPosition } from '../../types';
 import { ChevronLeftIcon, ChevronRightIcon } from '../../constants';
 import Tooltip from '../Tooltip';
 import { useLocalization } from '../../context/LocalizationContext';
+import SortableHeader from './SortableHeader';
+import { useSortableRows } from './useSortableRows';
 
 interface ClosedPositionsProps {
     closedPositions: ClosedPosition[];
@@ -16,8 +18,11 @@ const ClosedPositions: React.FC<ClosedPositionsProps> = ({ closedPositions, form
     const { t, locale } = useLocalization();
     const [currentPage, setCurrentPage] = useState(1);
     
-    const totalPages = Math.ceil(closedPositions.length / ITEMS_PER_PAGE);
-    const paginatedClosedPositions = closedPositions.slice(
+    type SortKey = 'assetCategory' | 'symbol' | 'realizedPL' | 'aroc';
+    const sortValue = useCallback((row: ClosedPosition, key: SortKey) => row[key], []);
+    const { sortedRows, sort, requestSort } = useSortableRows(closedPositions, 'realizedPL' as SortKey, sortValue, 'desc');
+    const totalPages = Math.ceil(sortedRows.length / ITEMS_PER_PAGE);
+    const paginatedClosedPositions = sortedRows.slice(
         (currentPage - 1) * ITEMS_PER_PAGE,
         currentPage * ITEMS_PER_PAGE
     );
@@ -42,14 +47,14 @@ const ClosedPositions: React.FC<ClosedPositionsProps> = ({ closedPositions, form
                 <table className="w-full text-left">
                     <thead>
                         <tr className="border-b border-brand-card">
-                            <th className="p-2 text-sm font-semibold text-brand-text-secondary uppercase">{t('dashboard.closedPositions.assetCategory')}</th>
-                            <th className="p-2 text-sm font-semibold text-brand-text-secondary uppercase">{t('dashboard.closedPositions.symbol')}</th>
-                            <th className="p-2 text-sm font-semibold text-brand-text-secondary uppercase text-right">{t('dashboard.closedPositions.realizedPL')}</th>
-                            <th className="p-2 text-sm font-semibold text-brand-text-secondary uppercase text-right">
+                            <SortableHeader column="assetCategory" activeColumn={sort.key} direction={sort.direction} onSort={requestSort}>{t('dashboard.closedPositions.assetCategory')}</SortableHeader>
+                            <SortableHeader column="symbol" activeColumn={sort.key} direction={sort.direction} onSort={requestSort}>{t('dashboard.closedPositions.symbol')}</SortableHeader>
+                            <SortableHeader column="realizedPL" activeColumn={sort.key} direction={sort.direction} onSort={requestSort} align="right">{t('dashboard.closedPositions.realizedPL')}</SortableHeader>
+                            <SortableHeader column="aroc" activeColumn={sort.key} direction={sort.direction} onSort={requestSort} align="right">
                                 <Tooltip align="right" content={t('dashboard.closedPositions.arocTooltip')}>
                                     <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.closedPositions.aroc')}</span>
                                 </Tooltip>
-                            </th>
+                            </SortableHeader>
                         </tr>
                     </thead>
                     <tbody>

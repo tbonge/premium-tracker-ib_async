@@ -1,8 +1,10 @@
 
-import React from 'react';
+import React, { useCallback } from 'react';
 import { Position } from '../../types';
 import Tooltip from '../Tooltip';
 import { useLocalization } from '../../context/LocalizationContext';
+import SortableHeader from './SortableHeader';
+import { useSortableRows } from './useSortableRows';
 
 interface Totals {
     [key: string]: number;
@@ -45,6 +47,17 @@ const OpenPositions: React.FC<OpenPositionsProps> = ({
     formatCurrency
 }) => {
     const { t } = useLocalization();
+    type StockKey = 'symbol' | 'quantity' | 'closePrice' | 'costBasis' | 'value' | 'unrealizedPL';
+    type OptionKey = 'symbol' | 'quantity' | 'strikePrice' | 'breakevenPrice' | 'moneyness' | 'dte' | 'collectedPremium' | 'unrealizedPL' | 'assignmentCost';
+    const stockValue = useCallback((row: Position, key: StockKey) => row[key], []);
+    const putValue = useCallback((row: EnhancedShortPut, key: OptionKey) => row[key as keyof EnhancedShortPut], []);
+    const callValue = useCallback((row: EnhancedShortCall, key: OptionKey) => row[key as keyof EnhancedShortCall], []);
+    const stocks = useSortableRows(stockPositions, 'symbol' as StockKey, stockValue);
+    const puts = useSortableRows(shortPuts, 'symbol' as OptionKey, putValue);
+    const calls = useSortableRows(shortCalls, 'symbol' as OptionKey, callValue);
+    const stockHeader = (key: StockKey, label: React.ReactNode, right = true) => <SortableHeader column={key} activeColumn={stocks.sort.key} direction={stocks.sort.direction} onSort={stocks.requestSort} align={right ? 'right' : 'left'}>{label}</SortableHeader>;
+    const putHeader = (key: OptionKey, label: React.ReactNode, right = true) => <SortableHeader column={key} activeColumn={puts.sort.key} direction={puts.sort.direction} onSort={puts.requestSort} align={right ? 'right' : 'left'}>{label}</SortableHeader>;
+    const callHeader = (key: OptionKey, label: React.ReactNode, right = true) => <SortableHeader column={key} activeColumn={calls.sort.key} direction={calls.sort.direction} onSort={calls.requestSort} align={right ? 'right' : 'left'}>{label}</SortableHeader>;
     
     return (
     <div className="bg-brand-surface rounded-lg shadow-lg p-6">
@@ -57,32 +70,28 @@ const OpenPositions: React.FC<OpenPositionsProps> = ({
                 <table className="w-full text-left">
                     <thead>
                         <tr className="border-b border-brand-card">
-                            <th className="p-2">{t('dashboard.openPositions.stocks.symbol')}</th>
-                            <th className="p-2 text-right">{t('dashboard.openPositions.stocks.qty')}</th>
-                            <th className="p-2 text-right">
+                            {stockHeader('symbol', t('dashboard.openPositions.stocks.symbol'), false)}
+                            {stockHeader('quantity', t('dashboard.openPositions.stocks.qty'))}
+                            {stockHeader('closePrice',
                                 <Tooltip content={t('dashboard.openPositions.stocks.currentPriceTooltip')}>
                                     <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.stocks.currentPrice')}</span>
-                                </Tooltip>
-                            </th>
-                            <th className="p-2 text-right">
+                                </Tooltip>)}
+                            {stockHeader('costBasis',
                                 <Tooltip content={t('dashboard.openPositions.stocks.costBasisTooltip')}>
                                     <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.stocks.costBasis')}</span>
-                                </Tooltip>
-                            </th>
-                            <th className="p-2 text-right">
+                                </Tooltip>)}
+                            {stockHeader('value',
                                 <Tooltip content={t('dashboard.openPositions.stocks.marketValueTooltip')}>
                                     <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.stocks.marketValue')}</span>
-                                </Tooltip>
-                            </th>
-                            <th className="p-2 text-right">
+                                </Tooltip>)}
+                            {stockHeader('unrealizedPL',
                                 <Tooltip align="right" content={t('dashboard.openPositions.stocks.unrealizedPLTooltip')}>
                                     <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.stocks.unrealizedPL')}</span>
-                                </Tooltip>
-                            </th>
+                                </Tooltip>)}
                         </tr>
                     </thead>
                     <tbody>
-                        {stockPositions.map((p, i) => (
+                        {stocks.sortedRows.map((p, i) => (
                             <tr key={i} className="border-b border-brand-card hover:bg-brand-card/50">
                                 <td className="p-2 font-mono">{p.symbol}</td>
                                 <td className="p-2 font-mono text-right">{p.quantity}</td>
@@ -116,39 +125,34 @@ const OpenPositions: React.FC<OpenPositionsProps> = ({
                 <table className="w-full text-left">
                     <thead>
                         <tr className="border-b border-brand-card">
-                            <th className="p-2">{t('dashboard.openPositions.puts.symbol')}</th>
-                            <th className="p-2 text-right">{t('dashboard.openPositions.puts.qty')}</th>
-                            <th className="p-2 text-right">{t('dashboard.openPositions.puts.strike')}</th>
-                            <th className="p-2 text-right">
+                            {putHeader('symbol', t('dashboard.openPositions.puts.symbol'), false)}
+                            {putHeader('quantity', t('dashboard.openPositions.puts.qty'))}
+                            {putHeader('strikePrice', t('dashboard.openPositions.puts.strike'))}
+                            {putHeader('breakevenPrice',
                                 <Tooltip content={t('dashboard.openPositions.puts.breakevenTooltip')}>
                                     <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.puts.breakeven')}</span>
-                                </Tooltip>
-                            </th>
-                            <th className="p-2 text-right">
+                                </Tooltip>)}
+                            {putHeader('moneyness',
                                 <Tooltip content={t('dashboard.openPositions.puts.moneynessTooltip')}>
                                     <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.puts.moneyness')}</span>
-                                </Tooltip>
-                            </th>
-                            <th className="p-2 text-right">
+                                </Tooltip>)}
+                            {putHeader('dte',
                                 <Tooltip content={t('dashboard.openPositions.puts.dteTooltip')}>
                                     <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.puts.dte')}</span>
-                                </Tooltip>
-                            </th>
-                            <th className="p-2 text-right">
+                                </Tooltip>)}
+                            {putHeader('collectedPremium',
                                 <Tooltip content={t('dashboard.openPositions.puts.premiumTooltip')}>
                                     <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.puts.premium')}</span>
-                                </Tooltip>
-                            </th>
-                            <th className="p-2 text-right">{t('dashboard.openPositions.puts.unrealizedPL')}</th>
-                            <th className="p-2 text-right">
+                                </Tooltip>)}
+                            {putHeader('unrealizedPL', t('dashboard.openPositions.puts.unrealizedPL'))}
+                            {putHeader('assignmentCost',
                                 <Tooltip align="right" content={t('dashboard.openPositions.puts.assignmentCostTooltip')}>
                                     <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.puts.assignmentCost')}</span>
-                                </Tooltip>
-                            </th>
+                                </Tooltip>)}
                         </tr>
                     </thead>
                     <tbody>
-                        {shortPuts.map((p, i) => {
+                        {puts.sortedRows.map((p, i) => {
                             const moneynessTooltip = p.stockPrice !== undefined
                                 ? t('dashboard.openPositions.puts.moneynessPriceAvailable', { baseSymbol: p.baseSymbol, price: formatCurrency(p.stockPrice, p.currency) })
                                 : t('dashboard.openPositions.puts.moneynessPriceUnavailable', { baseSymbol: p.baseSymbol });
@@ -205,34 +209,30 @@ const OpenPositions: React.FC<OpenPositionsProps> = ({
                 <table className="w-full text-left">
                     <thead>
                         <tr className="border-b border-brand-card">
-                            <th className="p-2">{t('dashboard.openPositions.calls.symbol')}</th>
-                            <th className="p-2 text-right">{t('dashboard.openPositions.calls.qty')}</th>
-                            <th className="p-2 text-right">{t('dashboard.openPositions.calls.strike')}</th>
-                            <th className="p-2 text-right">
+                            {callHeader('symbol', t('dashboard.openPositions.calls.symbol'), false)}
+                            {callHeader('quantity', t('dashboard.openPositions.calls.qty'))}
+                            {callHeader('strikePrice', t('dashboard.openPositions.calls.strike'))}
+                            {callHeader('breakevenPrice',
                                 <Tooltip content={t('dashboard.openPositions.calls.breakevenTooltip')}>
                                     <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.calls.breakeven')}</span>
-                                </Tooltip>
-                            </th>
-                            <th className="p-2 text-right">
+                                </Tooltip>)}
+                            {callHeader('moneyness',
                                 <Tooltip content={t('dashboard.openPositions.calls.moneynessTooltip')}>
                                     <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.calls.moneyness')}</span>
-                                </Tooltip>
-                            </th>
-                            <th className="p-2 text-right">
+                                </Tooltip>)}
+                            {callHeader('dte',
                                 <Tooltip content={t('dashboard.openPositions.calls.dteTooltip')}>
                                     <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.calls.dte')}</span>
-                                </Tooltip>
-                            </th>
-                            <th className="p-2 text-right">
+                                </Tooltip>)}
+                            {callHeader('collectedPremium',
                                 <Tooltip content={t('dashboard.openPositions.calls.premiumTooltip')}>
                                     <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.calls.premium')}</span>
-                                </Tooltip>
-                            </th>
-                            <th className="p-2 text-right">{t('dashboard.openPositions.calls.unrealizedPL')}</th>
+                                </Tooltip>)}
+                            {callHeader('unrealizedPL', t('dashboard.openPositions.calls.unrealizedPL'))}
                         </tr>
                     </thead>
                     <tbody>
-                        {shortCalls.map((p, i) => {
+                        {calls.sortedRows.map((p, i) => {
                              const moneynessTooltip = p.stockPrice !== undefined
                                 ? t('dashboard.openPositions.calls.moneynessPriceAvailable', { baseSymbol: p.baseSymbol, price: formatCurrency(p.stockPrice, p.currency) })
                                 : t('dashboard.openPositions.calls.moneynessPriceUnavailable', { baseSymbol: p.baseSymbol });

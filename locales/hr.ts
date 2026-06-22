@@ -101,8 +101,8 @@ export const hr = {
         },
         monthlyPerformance: {
             title: {
-                income: "Mjesečni pratitelj prihoda",
-                pl: "Mjesečni pratitelj D/G"
+                income: "Tjedni pratitelj prihoda",
+                pl: "Tjedni pratitelj D/G"
             },
             buttons: {
                 income: "Prihod",
@@ -120,8 +120,15 @@ export const hr = {
                 total: "Ukupno"
             }
         },
+        dailyOptionsActivity: {
+            title: "Dnevna Put/Call premija i zatvoreni D/G",
+            legend: {
+                premiumCollected: "Prikupljena premija",
+                closedPL: "Zatvoreni D/G"
+            }
+        },
         fees: {
-            title: "Mjesečni pregled troškova",
+            title: "Tjedni pregled troškova",
             legend: {
                 commissions: "Provizije",
                 otherFees: "Ostale naknade",

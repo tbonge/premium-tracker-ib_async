@@ -12,9 +12,10 @@ import LanguageSwitcher from './LanguageSwitcher';
 interface FileUploadProps {
   onFileSelect: (file: File) => void;
   onLiveLoad: () => void;
+  onFlexLoad: () => void;
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, onLiveLoad }) => {
+const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, onLiveLoad, onFlexLoad }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isInstructionsVisible, setIsInstructionsVisible] = useState(false);
   const [isGuideVisible, setIsGuideVisible] = useState(false);
@@ -66,16 +67,29 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, onLiveLoad }) => 
         </div>
 
         <div className="mb-6 flex flex-col items-center gap-3 rounded-md border border-brand-card bg-brand-surface p-5 text-center">
-          <button
-            type="button"
-            onClick={onLiveLoad}
-            className="inline-flex items-center gap-2 rounded-md bg-brand-accent px-5 py-3 font-semibold text-white shadow-md transition-colors hover:bg-brand-accent-hover focus:outline-none focus:ring-2 focus:ring-brand-accent focus:ring-opacity-75"
-          >
-            <PlugIcon className="h-5 w-5" />
-            {t('fileUpload.liveLoad.button')}
-          </button>
+          <div className="flex flex-wrap justify-center gap-3">
+            <button
+              type="button"
+              onClick={onLiveLoad}
+              className="inline-flex items-center gap-2 rounded-md bg-brand-accent px-5 py-3 font-semibold text-white shadow-md transition-colors hover:bg-brand-accent-hover focus:outline-none focus:ring-2 focus:ring-brand-accent focus:ring-opacity-75"
+            >
+              <PlugIcon className="h-5 w-5" />
+              {t('fileUpload.liveLoad.button')}
+            </button>
+            <button
+              type="button"
+              onClick={onFlexLoad}
+              className="inline-flex items-center gap-2 rounded-md bg-brand-card px-5 py-3 font-semibold text-brand-text-primary shadow-md transition-colors hover:bg-brand-accent-hover hover:text-white focus:outline-none focus:ring-2 focus:ring-brand-accent focus:ring-opacity-75"
+            >
+              <PlugIcon className="h-5 w-5" />
+              {t('fileUpload.flexLoad.button')}
+            </button>
+          </div>
           <p className="max-w-2xl text-sm text-brand-text-secondary">
             {t('fileUpload.liveLoad.description')}
+          </p>
+          <p className="max-w-2xl text-sm text-brand-text-secondary">
+            {t('fileUpload.flexLoad.description')}
           </p>
         </div>
         

@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { MonthlySummary } from '../../types';
+import { WeeklySummary } from '../../types';
 import { useLocalization } from '../../context/LocalizationContext';
 
 interface MonthlyPerformanceChartProps {
-    data: any[];
+    data: WeeklySummary[];
     valueFormatter: (value: number) => string;
     tooltipValueFormatter?: (value: number) => string;
 }
@@ -30,18 +30,10 @@ const MonthlyPerformanceChart: React.FC<MonthlyPerformanceChartProps> = ({ data,
         return null;
     }
     
-    const chartData = data.map(item => {
-        // If month is already formatted, use it. Otherwise, format it from YYYY-MM.
-        if (typeof item.month === 'string' && !item.month.includes('-')) {
-            return item;
-        }
-        const [year, month] = item.month.split('-');
-        const date = new Date(parseInt(year, 10), parseInt(month, 10) - 1);
-        return {
-            ...item,
-            month: date.toLocaleString(locale, { month: 'short', year: '2-digit' })
-        };
-    });
+    const chartData = data.map(item => ({
+        ...item,
+        weekLabel: new Date(`${item.week}T00:00:00`).toLocaleDateString(locale, { month: 'short', day: 'numeric' }),
+    }));
 
     const finalTooltipFormatter = tooltipValueFormatter || valueFormatter;
 
@@ -79,7 +71,7 @@ const MonthlyPerformanceChart: React.FC<MonthlyPerformanceChartProps> = ({ data,
             <ResponsiveContainer width="100%" height={400}>
                 <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#4a5568" />
-                    <XAxis dataKey="month" stroke="#a0aec0" />
+                    <XAxis dataKey="weekLabel" stroke="#a0aec0" minTickGap={20} />
                     <YAxis stroke="#a0aec0" tickFormatter={valueFormatter} />
                     <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(113, 128, 150, 0.1)' }}/>
                     <Legend wrapperStyle={{ color: '#edf2f7' }} onClick={handleLegendClick} />
