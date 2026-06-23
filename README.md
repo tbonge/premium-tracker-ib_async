@@ -2,15 +2,38 @@
 
 Local portfolio and options dashboard for Interactive Brokers accounts. It combines a read-only IB Gateway snapshot with Activity Flex Query history, while retaining CSV statements as an offline fallback.
 
+## Fork and Upstream Project
+
+This repository is a fork of [Marfusios/premium-tracker](https://github.com/Marfusios/premium-tracker). The original project established the browser-based IBKR CSV analyzer, including its portfolio dashboard, Wheel strategy tracking, short-put risk analysis, charts, multi-language and multi-currency support, and anonymized public view.
+
+This fork significantly extends that foundation. It is no longer limited to a manually downloaded CSV statement or a static browser-only deployment: it adds a local Python data service, IBKR Flex Web Service support, and a read-only IB Gateway/TWS connection so historical statement analytics can be combined with current account and market data.
+
+### Major additions in this fork
+
+- **IB Gateway and TWS integration:** Loads current NAV, cash, positions, option values, margin requirements, available funds, excess liquidity, buying power, and live or permitted delayed underlying prices through the read-only socket API.
+- **Activity Flex Query integration:** Downloads and parses XML reports directly from the IBKR Flex Web Service, with generation retries, validation diagnostics, missing-section warnings, and a Flex-only mode that works while Gateway is offline.
+- **Live and historical reconciliation:** Uses Flex as the historical baseline and overlays newer Gateway executions. Positions closed today, realized P/L, option premiums, and covered-call activity appear before IBKR includes them in the next Flex statement, without being counted twice after Flex catches up.
+- **Three-source loading workflow:** Supports combined Gateway + Flex data, Flex-only history, and the original CSV upload workflow. CSV remains an offline fallback and can be refreshed with a current Gateway snapshot.
+- **Expanded assignment and liquidity risk:** Adds live short-put assignment exposure, likely and unlikely assignment groupings, cash-shortfall estimates, margin and liquidity stress snapshots, expiration analysis, and assignment-cost planning.
+- **Enhanced Wheel workflow:** Tracks pending and completed Wheel cycles, assignment cost, put and call premiums, adjusted stock basis, current cycle P/L, and assigned-share coverage. Covered Call Planning shows open call coverage, weighted strike, uncovered shares, and whether action is required.
+- **Deeper options analytics:** Adds buy-to-close candidates based on premium capture, separate closed short-put and covered-call deep dives, intraday close reconciliation, closed-position AROC metrics, premium efficiency by underlying, and a LEAPS view for open options with at least 365 DTE.
+- **Broader portfolio reporting:** Adds NAV and drawdown history, weekly income/P&L and cost reporting, improved realized/unrealized P/L summaries, ticker-level P/L, current open positions, and richer closed-position aggregation.
+- **Dashboard usability improvements:** Detailed widgets have compact snapshot views, can be expanded independently, and collapsed widgets can be reordered by dragging. Tables are sortable, dense operational views use shorter labels, and widget state/order persist locally.
+- **Local security model:** Gateway is opened read-only, Flex credentials stay in the local process, statement files are not uploaded to an external service, and credential/environment files are excluded from Git.
+
+Because the live integrations run through the local Vite middleware and Python loader, this fork is not a static-only web application when using Gateway or Flex. A production deployment needs an equivalent trusted local service; the generated `dist` directory cannot contact IBKR by itself.
+
 ## Features
 
 - Live NAV, cash, positions, prices, unrealized P/L, margin, liquidity, and buying power from IB Gateway.
 - Historical trades, realized P/L, premiums, interest, commissions, fees, assignments, and expirations from Flex Web Service.
-- Weekly income, P/L, and cost charts plus daily put/call premium and closed P/L.
+- Intraday Gateway execution overlays for realized P/L, closed positions, and option premiums that are not yet available in Flex.
+- Weekly income, P/L, and cost charts plus NAV and drawdown history.
 - Short-put assignment risk, expiration calendar, and assignment cash/margin stress estimates.
 - Put-only buy-to-close candidates at 75% estimated premium capture; covered calls are intentionally excluded.
-- Wheel cycle tracking, event timeline, covered-call planning, and Wheel breakeven per share.
-- NAV and drawdown history, premium efficiency by ticker, allocation, AROC, and sortable position tables.
+- Wheel cycle tracking, event timeline, covered-call coverage planning, and adjusted Wheel basis per share.
+- Closed short-put and covered-call analysis, LEAPS analysis, premium efficiency by ticker, allocation, AROC, and sortable position tables.
+- Compact, expandable, and rearrangeable dashboard widgets with persistent layout preferences.
 - CSV statement parsing for offline use.
 - Multiple display currencies and languages.
 
