@@ -68,6 +68,12 @@ export const en = {
         }
     },
     dashboard: {
+        buyToClose: {
+            title: "Buy to Close Candidates",
+            description: "Short puts with at least {{threshold}} estimated premium capture. Covered calls are excluded and remain open for assignment.",
+            contract: "Put Contract", strike: "Strike", underlying: "Underlying", breakeven: "Breakeven",
+            premium: "Premium Collected", closeCost: "Estimated Close Cost", capturedProfit: "Profit Captured", capture: "Capture"
+        },
         marginRisk: {
             title: "Margin & Liquidity Risk",
             description: "Live IB Gateway account capacity, including a stress estimate after likely put assignments.",
@@ -105,15 +111,37 @@ export const en = {
             title: "Assigned Put Positions - Covered Call Planning",
             description: "Assigned shares, effective breakeven, live price, and call coverage available for choosing a covered-call strike and expiration.",
             symbol: "Symbol",
-            assigned: "Assigned",
-            shares: "Shares",
-            availableShares: "Shares Available",
-            assignmentPrice: "Assignment Price",
-            breakeven: "Wheel Breakeven / Share",
-            currentPrice: "Current Price",
-            daysHeld: "Days Held",
-            callPremium: "Call Premium",
-            totalPL: "Total P/L"
+            status: "Status",
+            covered: "Covered",
+            actionNeeded: "Action",
+            assigned: "Date",
+            shares: "Qty",
+            availableShares: "Uncovered",
+            openCalls: "Call Strike",
+            average: "Avg.",
+            assignmentPrice: "Assigned @",
+            breakeven: "Adj. Basis",
+            currentPrice: "Price",
+            daysHeld: "Days",
+            callPremium: "Call Prem.",
+            totalPL: "P/L"
+        },
+        leaps: {
+            title: "LEAPS Deep Dive",
+            description: "Open option positions with at least 365 calendar days remaining.",
+            contracts: "Contracts",
+            avgDte: "Avg. DTE",
+            value: "Market Value",
+            unrealized: "Unrealized P/L",
+            underlying: "Underlying",
+            type: "Position",
+            qty: "Qty",
+            strike: "Strike",
+            expiry: "Expiry",
+            long: "Long",
+            short: "Short",
+            call: "Call",
+            put: "Put"
         },
         header: {
             title: "Portfolio Dashboard",
@@ -245,6 +273,14 @@ export const en = {
                 avgPL: { title: "Avg. P/L / Contract", description: "Average profit or loss per closed contract.", tooltip: "The average income or loss generated from each closed short put contract." },
                 assignmentRate: { title: "Assignment Rate", description: "Percentage of short puts that were assigned.", tooltip: "Of all closed short puts, this is the percentage that were assigned (i.e., you had to buy the stock)." },
                 avgAroc: { title: "Avg. Annualized ROC", description: "Avg. annualized return for profitable closed puts.", tooltip: "Annualized Return on Capital. For profitable short puts, it annualizes the return based on the capital at risk and the trade duration. Helps compare trades of different lengths." }
+            },
+            closedCalls: {
+                title: "Closed Covered Calls Deep Dive",
+                totalPL: { title: "Total Realized P/L", description: "From expired, assigned, or bought-to-close calls.", tooltip: "Total identified profit or loss from closed short call contracts." },
+                contractsClosed: { title: "Contracts Closed", description: "Total short call contracts closed.", tooltip: "Contracts bought back, expired, or assigned where the opening short-call lot was available." },
+                avgPL: { title: "Avg. P/L / Contract", description: "Average result per closed call.", tooltip: "Total realized short-call P/L divided by contracts closed." },
+                winRate: { title: "Win Rate", description: "Profitable or expired call contracts.", tooltip: "Percentage of identified closed short calls with non-negative realized P/L." },
+                assignmentRate: { title: "Assignment Rate", description: "Calls ending in stock assignment.", tooltip: "Percentage of identified closed calls that were assigned." }
             }
         },
         allocations: {
@@ -316,12 +352,20 @@ export const en = {
             }
         },
         closedPositions: {
-            title: "Closed Positions (Realized P/L)",
+            title: "Closed Positions & Annualized ROC",
             assetCategory: "Asset Category",
             symbol: "Symbol",
-            realizedPL: "Realized P/L",
-            aroc: "AROC",
-            arocTooltip: "Annualized Return on Capital. For profitable short puts, it annualizes the return based on the capital at risk and the trade duration. Helps compare trades of different lengths."
+              underlying: "Underlying",
+              closedRecords: "Closed Records",
+              realizedPL: "Realized P/L",
+              totalPL: "Total P/L",
+              totalPremium: "Total Premium",
+              avgDaysOpen: "Avg. Days Open",
+              totalRisk: "Total Risk",
+              totalRiskTooltip: "Total strike notional across the closed option lots (strike x contracts x multiplier).",
+              avgAroc: "Avg. AROC",
+              aroc: "AROC",
+              arocTooltip: "Average signed annualized return across the closed option lots, weighted by contract quantity."
         },
         wheelSummary: {
             title: "Wheel Strategy Performance Summary",

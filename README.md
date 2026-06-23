@@ -8,6 +8,7 @@ Local portfolio and options dashboard for Interactive Brokers accounts. It combi
 - Historical trades, realized P/L, premiums, interest, commissions, fees, assignments, and expirations from Flex Web Service.
 - Weekly income, P/L, and cost charts plus daily put/call premium and closed P/L.
 - Short-put assignment risk, expiration calendar, and assignment cash/margin stress estimates.
+- Put-only buy-to-close candidates at 75% estimated premium capture; covered calls are intentionally excluded.
 - Wheel cycle tracking, event timeline, covered-call planning, and Wheel breakeven per share.
 - NAV and drawdown history, premium efficiency by ticker, allocation, AROC, and sortable position tables.
 - CSV statement parsing for offline use.
@@ -146,6 +147,7 @@ Save the query and copy its numeric **Query ID** from the query details. The Que
 ## Loading Data
 
 - **Load from IB Gateway** loads the current Gateway snapshot and automatically merges Flex history when both Flex variables are configured.
+- In the combined Gateway + Flex view, Flex is the historical P/L baseline and Gateway commission reports add realized P/L from executions newer than the latest populated Flex activity day. This makes positions closed today visible before IBKR adds them to the next Flex statement.
 - **Load Flex History** loads Flex without requiring Gateway.
 - Uploading a CSV parses its full statement history, then overlays a current Gateway snapshot when Gateway is available.
 - **Refresh Data** reloads Gateway/Flex data for a live dashboard and current Gateway state for a CSV-backed dashboard.

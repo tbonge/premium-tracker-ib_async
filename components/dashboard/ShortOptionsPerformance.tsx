@@ -3,7 +3,7 @@
 import React from 'react';
 import MetricCard from '../MetricCard';
 import { InfoIcon, GiftIcon, TrendingUpIcon, CheckCircleIcon, RepeatIcon, MoneyIcon } from '../../constants';
-import { ArocAnalysis, OptionsStrategyMetrics, ShortPutIncomeSummary } from '../../types';
+import { ArocAnalysis, OptionsStrategyMetrics, ShortCallIncomeSummary, ShortPutIncomeSummary } from '../../types';
 import Tooltip from '../Tooltip';
 import { useLocalization } from '../../context/LocalizationContext';
 
@@ -21,6 +21,7 @@ interface ShortOptionsPerformanceProps {
     arocAnalysis: ArocAnalysis;
     optionsStrategyMetrics: OptionsStrategyMetrics;
     shortPutIncomeSummary: ShortPutIncomeSummary;
+    shortCallIncomeSummary: ShortCallIncomeSummary;
     formatInSelectedCurrency: (value: number) => string;
 }
 
@@ -32,6 +33,7 @@ const ShortOptionsPerformance: React.FC<ShortOptionsPerformanceProps> = ({
     arocAnalysis,
     optionsStrategyMetrics,
     shortPutIncomeSummary,
+    shortCallIncomeSummary,
     formatInSelectedCurrency
 }) => {
     const { t, locale } = useLocalization();
@@ -145,6 +147,21 @@ const ShortOptionsPerformance: React.FC<ShortOptionsPerformanceProps> = ({
                             tooltip={t('dashboard.shortOptionsStrategy.closedPuts.avgAroc.tooltip')}
                         />
                     )}
+                </div>
+            </div>
+        </>
+        )}
+        {shortCallIncomeSummary.hasData && (
+        <>
+            <div className="border-t border-brand-card my-8"></div>
+            <div>
+                <h3 className="text-xl font-semibold mb-4 text-brand-accent">{t('dashboard.shortOptionsStrategy.closedCalls.title')}</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-6">
+                    <MetricCard title={t('dashboard.shortOptionsStrategy.closedCalls.totalPL.title')} value={formatInSelectedCurrency(shortCallIncomeSummary.totalRealizedPL)} icon={<MoneyIcon />} isPositive={shortCallIncomeSummary.totalRealizedPL >= 0} description={t('dashboard.shortOptionsStrategy.closedCalls.totalPL.description')} tooltip={t('dashboard.shortOptionsStrategy.closedCalls.totalPL.tooltip')} />
+                    <MetricCard title={t('dashboard.shortOptionsStrategy.closedCalls.contractsClosed.title')} value={shortCallIncomeSummary.numberOfContracts.toLocaleString(locale)} icon={<CheckCircleIcon />} description={t('dashboard.shortOptionsStrategy.closedCalls.contractsClosed.description')} tooltip={t('dashboard.shortOptionsStrategy.closedCalls.contractsClosed.tooltip')} />
+                    <MetricCard title={t('dashboard.shortOptionsStrategy.closedCalls.avgPL.title')} value={formatInSelectedCurrency(shortCallIncomeSummary.averagePLPerContract)} icon={<InfoIcon />} isPositive={shortCallIncomeSummary.averagePLPerContract >= 0} description={t('dashboard.shortOptionsStrategy.closedCalls.avgPL.description')} tooltip={t('dashboard.shortOptionsStrategy.closedCalls.avgPL.tooltip')} />
+                    <MetricCard title={t('dashboard.shortOptionsStrategy.closedCalls.winRate.title')} value={`${(shortCallIncomeSummary.winRate * 100).toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`} icon={<TrendingUpIcon />} isPositive={shortCallIncomeSummary.winRate >= 0.5} description={t('dashboard.shortOptionsStrategy.closedCalls.winRate.description')} tooltip={t('dashboard.shortOptionsStrategy.closedCalls.winRate.tooltip')} />
+                    <MetricCard title={t('dashboard.shortOptionsStrategy.closedCalls.assignmentRate.title')} value={`${(shortCallIncomeSummary.assignmentRate * 100).toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`} icon={<RepeatIcon />} description={t('dashboard.shortOptionsStrategy.closedCalls.assignmentRate.description')} tooltip={t('dashboard.shortOptionsStrategy.closedCalls.assignmentRate.tooltip')} />
                 </div>
             </div>
         </>

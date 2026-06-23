@@ -49,14 +49,14 @@ const parseCsvLine = (line: string): string[] => {
     return columns;
 };
 
-function analyzeShortPutIncome(trades: any[], exchangeRates: { [key: string]: number }): ShortPutIncomeSummary {
+function analyzeShortOptionIncome(trades: any[], exchangeRates: { [key: string]: number }, optionTypeToMatch: 'P' | 'C'): ShortPutIncomeSummary {
     if (!trades) {
         return { totalRealizedPL: 0, numberOfContracts: 0, averagePLPerContract: 0, hasData: false };
     }
 
     const closedShortPuts = trades.filter(r => {
         const { isOption, optionType } = parseOptionSymbol(r.Symbol);
-        if (!isOption || optionType !== 'P' || r['DataDiscriminator'] !== 'Order') {
+        if (!isOption || optionType !== optionTypeToMatch || r['DataDiscriminator'] !== 'Order') {
             return false;
         }
 
@@ -780,6 +780,7 @@ export function parseIbkrCsv(csvString: string): ParsedData {
             endingValue: 0,
         },
         shortPutIncomeSummary: { totalRealizedPL: 0, numberOfContracts: 0, averagePLPerContract: 0, hasData: false },
+        shortCallIncomeSummary: { totalRealizedPL: 0, numberOfContracts: 0, averagePLPerContract: 0, assignmentRate: 0, winRate: 0, hasData: false },
         historyStatus: { source: 'csv', complete: true, warnings: [] },
         marginLiquidity: {
             netLiquidation: 0, totalCash: 0, availableFunds: 0, excessLiquidity: 0,
@@ -787,6 +788,7 @@ export function parseIbkrCsv(csvString: string): ParsedData {
         },
         equityHistory: [],
         premiumEfficiency: [],
+        closedTradeMetrics: [],
     };
 
      // Process Statement for Period
@@ -1011,7 +1013,9 @@ export function parseIbkrCsv(csvString: string): ParsedData {
     }
 
     if (sections['Trades']) {
-        data.shortPutIncomeSummary = analyzeShortPutIncome(sections['Trades'], data.exchangeRates);
+        data.shortPutIncomeSummary = analyzeShortOptionIncome(sections['Trades'], data.exchangeRates, 'P');
+        const calls = analyzeShortOptionIncome(sections['Trades'], data.exchangeRates, 'C');
+        data.shortCallIncomeSummary = { ...calls, assignmentRate: 0, winRate: 0 };
         data.wheelCycleAnalysis = analyzeWheelCycles(sections['Trades'], data.exchangeRates, data.accountInfo.baseCurrency, instrumentMultipliers, data.positions);
         const openTrades = new Map<string, any[]>();
         const arocTrades: ArocTrade[] = [];

@@ -26,6 +26,10 @@ export interface ClosedPosition {
     realizedPL: number;
     aroc?: number;
     closeDate?: string;
+    daysOpen?: number;
+    premiumCollected?: number;
+    capitalAtRisk?: number;
+    arocTradeCount?: number;
 }
 
 export interface NavData {
@@ -170,6 +174,11 @@ export interface HistoryStatus {
   warnings: string[];
 }
 
+export interface ShortCallIncomeSummary extends ShortPutIncomeSummary {
+  assignmentRate: number;
+  winRate: number;
+}
+
 export interface MarginLiquidity {
   netLiquidation: number;
   totalCash: number;
@@ -202,6 +211,15 @@ export interface PremiumEfficiencyRow {
   trades: number;
 }
 
+export interface ClosedTradeMetric {
+  symbol: string;
+  premiumCollected: number;
+  capitalAtRisk: number;
+  daysOpen: number;
+  aroc: number;
+  tradeCount: number;
+}
+
 export interface ParsedData {
   positions: Position[];
   closedPositions: ClosedPosition[];
@@ -226,8 +244,10 @@ export interface ParsedData {
   syepIncome?: number;
   navChange: NAVChange;
   shortPutIncomeSummary: ShortPutIncomeSummary;
+  shortCallIncomeSummary: ShortCallIncomeSummary;
   historyStatus?: HistoryStatus;
   marginLiquidity: MarginLiquidity;
   equityHistory: EquityHistoryPoint[];
   premiumEfficiency: PremiumEfficiencyRow[];
+  closedTradeMetrics: ClosedTradeMetric[];
 }

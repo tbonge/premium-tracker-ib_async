@@ -6,7 +6,6 @@ import Header from './dashboard/Header';
 import MetricCards from './dashboard/MetricCards';
 import PLSummary from './dashboard/PLSummary';
 import MonthlyPerformanceChart from './dashboard/MonthlyIncomeChart';
-import DailyOptionsActivityChart from './dashboard/DailyOptionsActivityChart';
 import FeesChart from './dashboard/FeesChart';
 import ShortPutRisk from './dashboard/ShortPutRisk';
 import ShortOptionsPerformance from './dashboard/ShortOptionsPerformance';
@@ -15,7 +14,6 @@ import OpenPositions from './dashboard/OpenPositions';
 import ClosedPositions from './dashboard/ClosedPositions';
 import WheelStrategySummary from './dashboard/WheelStrategySummary';
 import WheelCycles from './dashboard/WheelCycles';
-import ArocTradeDetails from './dashboard/ArocTradeDetails';
 import AssignedPutPositions from './dashboard/AssignedPutPositions';
 import Footer from './Footer';
 import PublicDashboard from './dashboard/PublicDashboard';
@@ -27,6 +25,16 @@ import NAVDrawdownHistory from './dashboard/NAVDrawdownHistory';
 import WheelPositionTimeline from './dashboard/WheelPositionTimeline';
 import PremiumEfficiency from './dashboard/PremiumEfficiency';
 import { calendarDte } from '../utils/dates';
+import BuyToCloseCandidates from './dashboard/BuyToCloseCandidates';
+import CollapsibleWidget, { SortableWidgetGroup } from './dashboard/CollapsibleWidget';
+import LeapsDeepDive from './dashboard/LeapsDeepDive';
+
+const widgetOrder = [
+    'margin-risk', 'pl-summary', 'nav-history', 'performance', 'fees', 'buy-to-close',
+    'assignment-risk', 'expiration-calendar', 'options-performance', 'leaps', 'premium-efficiency',
+    'covered-call-planning', 'allocations', 'open-positions', 'closed-positions',
+    'wheel-summary', 'wheel-timeline', 'wheel-cycles',
+];
 
 interface DashboardProps {
   data: ParsedData;
@@ -36,7 +44,7 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isRefreshing }) => {
-    const { locale } = useLocalization();
+    const { locale, t } = useLocalization();
     const [view, setView] = useState<'private' | 'public'>('private');
     const [selectedCurrency, setSelectedCurrency] = useState<string>(data.exchangeRates.USD ? 'USD' : data.nav.baseCurrency);
     const [allocationFilters, setAllocationFilters] = useState({ stocks: true, puts: true, calls: true });
@@ -158,6 +166,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                     stockPrice
                 };
             });
+        const leapsPositions = data.positions.filter(position => position.isOption && (calendarDte(position.expiry, today) ?? -Infinity) >= 365);
         
         const likelyAssignments: (typeof shortPuts[0])[] = [];
         const unlikelyAssignments: (typeof shortPuts[0])[] = [];
@@ -287,21 +296,34 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
             'Options': 3,
         };
 
-        const arocBySymbol = new Map<string, number>();
-        if (data.arocAnalysis && data.arocAnalysis.trades.length > 0) {
+        const arocBySymbol = new Map<string, { aroc: number; daysOpen: number; premiumCollected: number; capitalAtRisk: number; arocTradeCount: number }>();
+        if (data.closedTradeMetrics.length > 0) {
+            data.closedTradeMetrics.forEach(metric => arocBySymbol.set(metric.symbol, {
+                aroc: metric.aroc,
+                daysOpen: metric.daysOpen,
+                premiumCollected: metric.premiumCollected,
+                capitalAtRisk: metric.capitalAtRisk,
+                arocTradeCount: metric.tradeCount,
+            }));
+        } else if (data.arocAnalysis && data.arocAnalysis.trades.length > 0) {
             const arocTradesBySymbol = data.arocAnalysis.trades.reduce((acc, trade) => {
-                const symbol = trade.symbol; // Use the full option symbol
+                const symbol = trade.symbol;
                 if (!acc[symbol]) {
                     acc[symbol] = [];
                 }
-                acc[symbol].push(trade.aroc);
+                acc[symbol].push(trade);
                 return acc;
-            }, {} as Record<string, number[]>);
+            }, {} as Record<string, typeof data.arocAnalysis.trades>);
 
             for (const symbol in arocTradesBySymbol) {
-                const arocs = arocTradesBySymbol[symbol];
-                const avgAroc = arocs.reduce((sum, val) => sum + val, 0) / arocs.length;
-                arocBySymbol.set(symbol, avgAroc);
+                const trades = arocTradesBySymbol[symbol];
+                arocBySymbol.set(symbol, {
+                    aroc: trades.reduce((sum, trade) => sum + trade.aroc, 0) / trades.length,
+                    daysOpen: trades.reduce((sum, trade) => sum + trade.daysOpen, 0) / trades.length,
+                    premiumCollected: trades.reduce((sum, trade) => sum + trade.premiumCollected, 0),
+                    capitalAtRisk: trades.reduce((sum, trade) => sum + trade.capitalAtRisk, 0),
+                    arocTradeCount: trades.length,
+                });
             }
         }
         
@@ -309,7 +331,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
             .filter(p => p.realizedPL !== 0)
             .map(p => ({
                 ...p,
-                aroc: arocBySymbol.get(p.symbol) // Look up with full symbol
+                ...arocBySymbol.get(p.symbol),
             }))
             .sort((a, b) => {
                 const orderA = categoryOrder[a.assetCategory] || 99;
@@ -360,6 +382,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
         return { 
             shortPuts,
             shortCalls,
+            leapsPositions,
             stockPositions, 
             cashBalance, 
             portfolioAllocation, 
@@ -386,6 +409,19 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
     if (view === 'public') {
         return <PublicDashboard data={data} dashboardData={dashboardData} onExit={() => setView('private')} />;
     }
+
+    const latestWeek = data.weeklySummary[data.weeklySummary.length - 1];
+    const totalFees = data.weeklySummary.reduce((sum, row) => sum + row.commissions + row.fees + row.salesTax, 0);
+    const optionPositions = data.positions.filter(position => position.isOption);
+    const nearestExpiry = optionPositions.map(position => position.expiry).filter(Boolean).sort()[0];
+    const pendingCycles = data.wheelCycleAnalysis.pendingCycles;
+    const completedCycles = data.wheelCycleAnalysis.completedCycles;
+    const coveredAssignedCycles = pendingCycles.filter(cycle => {
+        const coveredShares = data.positions
+            .filter(position => position.isOption && position.optionType === 'C' && position.quantity < 0 && position.baseSymbol === cycle.symbol)
+            .reduce((sum, position) => sum + Math.abs(position.quantity) * (position.multiplier || 100), 0);
+        return coveredShares >= cycle.assignmentShares;
+    }).length;
     
     return (
         <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
@@ -417,23 +453,31 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                     </div>
                 </div>
             )}
-            <MarginLiquidityRisk data={data.marginLiquidity} likelyAssignmentValue={dashboardData.likelyAssignmentValue} formatCurrency={formatInSelectedCurrency} />
-            <PLSummary plSummary={data.plSummary} valueFormatter={formatInSelectedCurrency} />
-            <NAVDrawdownHistory data={data.equityHistory} formatCurrency={formatInSelectedCurrency} />
-            <MonthlyPerformanceChart 
-                data={data.weeklySummary}
-                valueFormatter={(value) => formatInSelectedCurrency(value).replace(/(\.00|,[0-9]{2})$/, '')}
-                tooltipValueFormatter={formatInSelectedCurrency}
-            />
-            <DailyOptionsActivityChart
-                data={data.dailyOptionsSummary}
-                valueFormatter={formatInSelectedCurrency}
-            />
-            <FeesChart 
-                data={data.weeklySummary}
-                formatInSelectedCurrency={formatInSelectedCurrency}
-            />
-            <ShortPutRisk 
+            <SortableWidgetGroup ids={widgetOrder}>
+            <CollapsibleWidget id="margin-risk" title={t('dashboard.marginRisk.title')} summary={`Available ${formatInSelectedCurrency(data.marginLiquidity.availableFunds)} | Likely assignments ${formatInSelectedCurrency(dashboardData.likelyAssignmentValue)}`}>
+                <MarginLiquidityRisk data={data.marginLiquidity} likelyAssignmentValue={dashboardData.likelyAssignmentValue} formatCurrency={formatInSelectedCurrency} />
+            </CollapsibleWidget>
+            <CollapsibleWidget id="pl-summary" title={t('dashboard.plSummary.title')} summary={`Realized ${formatInSelectedCurrency(data.plSummary.total.realized)} | Unrealized ${formatInSelectedCurrency(data.plSummary.total.unrealized)} | Total ${formatInSelectedCurrency(data.plSummary.total.total)}`}>
+                <PLSummary plSummary={data.plSummary} valueFormatter={formatInSelectedCurrency} />
+            </CollapsibleWidget>
+            {data.equityHistory.length > 0 && <CollapsibleWidget id="nav-history" title={t('dashboard.navHistory.title')} summary={`${data.equityHistory[0].date} - ${data.equityHistory[data.equityHistory.length - 1].date} | NAV ${formatInSelectedCurrency(data.totalNAV)}`}>
+                <NAVDrawdownHistory data={data.equityHistory} formatCurrency={formatInSelectedCurrency} />
+            </CollapsibleWidget>}
+            {latestWeek && <CollapsibleWidget id="performance" title={t('dashboard.monthlyPerformance.title.income')} summary={`${latestWeek.week} | Premium ${formatInSelectedCurrency(latestWeek.optionsPremium)} | P/L ${formatInSelectedCurrency(latestWeek.optionsPL)}`}>
+                <MonthlyPerformanceChart
+                    data={data.weeklySummary}
+                    valueFormatter={(value) => formatInSelectedCurrency(value).replace(/(\.00|,[0-9]{2})$/, '')}
+                    tooltipValueFormatter={formatInSelectedCurrency}
+                />
+            </CollapsibleWidget>}
+            {latestWeek && <CollapsibleWidget id="fees" title={t('dashboard.fees.title')} summary={`Total commissions, fees and tax ${formatInSelectedCurrency(totalFees)}`}>
+                <FeesChart data={data.weeklySummary} formatInSelectedCurrency={formatInSelectedCurrency} />
+            </CollapsibleWidget>}
+            {dashboardData.shortPuts.length > 0 && <CollapsibleWidget id="buy-to-close" title={t('dashboard.buyToClose.title')} summary={`${dashboardData.shortPuts.length} open puts | Premium ${formatInSelectedCurrency(dashboardData.putTotals.collectedPremium)}`}>
+                <BuyToCloseCandidates puts={dashboardData.shortPuts} formatInSelectedCurrency={formatInSelectedCurrency} formatCurrency={formatCurrency} />
+            </CollapsibleWidget>}
+            <CollapsibleWidget id="assignment-risk" title={t('dashboard.putRisk.title')} summary={`${dashboardData.likelyAssignments.length} likely | Cash needed ${formatInSelectedCurrency(dashboardData.likelyCashNeeded)}`}>
+                <ShortPutRisk
                 cashBalance={dashboardData.cashBalance}
                 likelyAssignmentValue={dashboardData.likelyAssignmentValue}
                 unlikelyAssignmentValue={dashboardData.unlikelyAssignmentValue}
@@ -444,9 +488,13 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                 unlikelyShortfallDetails={dashboardData.unlikelyShortfallDetails}
                 formatInSelectedCurrency={formatInSelectedCurrency}
                 formatCurrency={formatCurrency}
-            />
-            <ExpirationCalendar positions={data.positions} exchangeRates={data.exchangeRates} formatCurrency={formatInSelectedCurrency} />
-            <ShortOptionsPerformance 
+                />
+            </CollapsibleWidget>
+            {optionPositions.length > 0 && <CollapsibleWidget id="expiration-calendar" title={t('dashboard.expirationCalendar.title')} summary={`${optionPositions.length} open options | Next expiry ${nearestExpiry || '-'}`}>
+                <ExpirationCalendar positions={data.positions} exchangeRates={data.exchangeRates} formatCurrency={formatInSelectedCurrency} />
+            </CollapsibleWidget>}
+            <CollapsibleWidget id="options-performance" title={t('dashboard.shortOptionsStrategy.title')} summary={`Closed puts ${formatInSelectedCurrency(data.shortPutIncomeSummary.totalRealizedPL)} | Closed calls ${formatInSelectedCurrency(data.shortCallIncomeSummary.totalRealizedPL)}`}>
+                <ShortOptionsPerformance
                 shortPutPerformance={dashboardData.shortPutPerformance}
                 shortCallPerformance={dashboardData.shortCallPerformance}
                 returnOnMaxRisk={dashboardData.returnOnMaxRisk}
@@ -454,25 +502,36 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                 arocAnalysis={data.arocAnalysis}
                 optionsStrategyMetrics={data.optionsStrategyMetrics}
                 shortPutIncomeSummary={data.shortPutIncomeSummary}
+                shortCallIncomeSummary={data.shortCallIncomeSummary}
                 formatInSelectedCurrency={formatInSelectedCurrency}
-            />
-            <ArocTradeDetails analysis={data.arocAnalysis} formatInSelectedCurrency={formatInSelectedCurrency} />
-            <PremiumEfficiency data={data.premiumEfficiency} formatCurrency={formatInSelectedCurrency} />
-            <AssignedPutPositions
+                />
+            </CollapsibleWidget>
+            {dashboardData.leapsPositions.length > 0 && <CollapsibleWidget id="leaps" title={t('dashboard.leaps.title')} summary={`${dashboardData.leapsPositions.length} positions | Value ${formatInSelectedCurrency(dashboardData.leapsPositions.reduce((sum, position) => sum + position.value, 0))} | P/L ${formatInSelectedCurrency(dashboardData.leapsPositions.reduce((sum, position) => sum + position.unrealizedPL, 0))}`}>
+                <LeapsDeepDive positions={dashboardData.leapsPositions} formatInSelectedCurrency={formatInSelectedCurrency} formatCurrency={formatCurrency} />
+            </CollapsibleWidget>}
+            {data.premiumEfficiency.length > 0 && <CollapsibleWidget id="premium-efficiency" title={t('dashboard.premiumEfficiency.title')} summary={`${data.premiumEfficiency.length} underlyings | Premium ${formatInSelectedCurrency(data.premiumEfficiency.reduce((sum, row) => sum + row.premiumCollected, 0))}`}>
+                <PremiumEfficiency data={data.premiumEfficiency} formatCurrency={formatInSelectedCurrency} />
+            </CollapsibleWidget>}
+            {pendingCycles.length > 0 && <CollapsibleWidget id="covered-call-planning" title={t('dashboard.assignedPuts.title')} summary={`${pendingCycles.length} assigned positions | ${coveredAssignedCycles} covered | ${pendingCycles.length - coveredAssignedCycles} need action`}>
+                <AssignedPutPositions
                 cycles={data.wheelCycleAnalysis.pendingCycles}
                 positions={data.positions}
                 exchangeRates={data.exchangeRates}
                 formatInSelectedCurrency={formatInSelectedCurrency}
                 formatCurrency={formatCurrency}
-            />
-            <AllocationCharts
+                />
+            </CollapsibleWidget>}
+            <CollapsibleWidget id="allocations" title={t('dashboard.allocations.byTickerTitle')} summary={`${dashboardData.portfolioAllocation.length} underlyings | Largest ${dashboardData.portfolioAllocation[0]?.name || '-'}`}>
+                <AllocationCharts
                 portfolioAllocation={dashboardData.portfolioAllocation}
                 assetClassAllocation={dashboardData.assetClassAllocation}
                 formatInSelectedCurrency={formatInSelectedCurrency}
                 allocationFilters={allocationFilters}
                 onAllocationFilterChange={handleAllocationFilterChange}
-            />
-            <OpenPositions 
+                />
+            </CollapsibleWidget>
+            <CollapsibleWidget id="open-positions" title={t('dashboard.openPositions.title')} summary={`${dashboardData.stockPositions.length} stocks | ${dashboardData.shortPuts.length} puts | ${dashboardData.shortCalls.length} calls`}>
+                <OpenPositions
                 stockPositions={dashboardData.stockPositions}
                 shortPuts={dashboardData.shortPuts}
                 shortCalls={dashboardData.shortCalls}
@@ -481,22 +540,32 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                 callTotals={dashboardData.callTotals}
                 formatInSelectedCurrency={formatInSelectedCurrency}
                 formatCurrency={formatCurrency}
-            />
-            <ClosedPositions
+                />
+            </CollapsibleWidget>
+            {dashboardData.closedPositions.length > 0 && <CollapsibleWidget id="closed-positions" title={t('dashboard.closedPositions.title')} summary={`${dashboardData.closedPositions.length} records | Realized ${formatInSelectedCurrency(dashboardData.closedPositions.reduce((sum, row) => sum + row.realizedPL, 0))}`}>
+                <ClosedPositions
                 closedPositions={dashboardData.closedPositions}
                 formatInSelectedCurrency={formatInSelectedCurrency}
-            />
-            <WheelStrategySummary 
+                />
+            </CollapsibleWidget>}
+            {(pendingCycles.length > 0 || completedCycles.length > 0) && <CollapsibleWidget id="wheel-summary" title={t('dashboard.wheelSummary.title')} summary={`${pendingCycles.length} active | ${completedCycles.length} completed`}>
+                <WheelStrategySummary
                 wheelCycleAnalysis={data.wheelCycleAnalysis}
                 formatInSelectedCurrency={formatInSelectedCurrency}
-            />
-            <WheelPositionTimeline analysis={data.wheelCycleAnalysis} formatCurrency={formatInSelectedCurrency} />
-            <WheelCycles 
+                />
+            </CollapsibleWidget>}
+            {(pendingCycles.length > 0 || completedCycles.length > 0) && <CollapsibleWidget id="wheel-timeline" title={t('dashboard.wheelTimeline.title')} summary={`${pendingCycles.length + completedCycles.length} wheel cycles tracked`}>
+                <WheelPositionTimeline analysis={data.wheelCycleAnalysis} formatCurrency={formatInSelectedCurrency} />
+            </CollapsibleWidget>}
+            {(pendingCycles.length > 0 || completedCycles.length > 0) && <CollapsibleWidget id="wheel-cycles" title={t('dashboard.wheel.title')} summary={`${pendingCycles.length} pending | ${completedCycles.length} completed`}>
+                <WheelCycles
                 wheelCycleAnalysis={data.wheelCycleAnalysis}
                 formatInSelectedCurrency={formatInSelectedCurrency}
                 formatCurrency={formatCurrency}
                 baseCurrency={data.nav.baseCurrency}
-            />
+                />
+            </CollapsibleWidget>}
+            </SortableWidgetGroup>
             <Footer />
         </div>
     );

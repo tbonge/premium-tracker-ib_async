@@ -222,6 +222,14 @@ def empty_dashboard(base_currency: str = "USD") -> dict[str, Any]:
             "averagePLPerContract": 0,
             "hasData": False,
         },
+        "shortCallIncomeSummary": {
+            "totalRealizedPL": 0,
+            "numberOfContracts": 0,
+            "averagePLPerContract": 0,
+            "assignmentRate": 0,
+            "winRate": 0,
+            "hasData": False,
+        },
         "historyStatus": {
             "source": "gateway",
             "complete": False,
@@ -241,6 +249,10 @@ def empty_dashboard(base_currency: str = "USD") -> dict[str, Any]:
         },
         "equityHistory": [],
         "premiumEfficiency": [],
+        "closedTradeMetrics": [],
+        # Internal merge input populated from Gateway commission reports.
+        "sessionRealizedEvents": [],
+        "sessionOptionSales": [],
     }
 
 
@@ -425,10 +437,20 @@ def empty_daily_options_summary(end_day: date | None = None) -> dict[str, dict[s
     }
 
 
-def read_option_premiums(ib: IB, account: str = "") -> tuple[dict[str, float], list[dict[str, float | str]], list[dict[str, float | str]]]:
+def read_option_premiums(
+    ib: IB, account: str = ""
+) -> tuple[
+    dict[str, float],
+    list[dict[str, float | str]],
+    list[dict[str, float | str]],
+    list[dict[str, float | str]],
+    list[dict[str, float | str]],
+]:
     premiums: dict[str, float] = {}
     monthly: dict[str, dict[str, float | str]] = {}
     daily = empty_daily_options_summary()
+    realized_events: list[dict[str, float | str]] = []
+    option_sales: list[dict[str, float | str]] = []
 
     fills = ib.fills()
     if not fills:
@@ -437,12 +459,12 @@ def read_option_premiums(ib: IB, account: str = "") -> tuple[dict[str, float], l
             fills = ib.reqExecutions(exec_filter)
         except Exception as exc:
             print(f"Unable to load execution premium data: {exc}", file=sys.stderr)
-            return premiums, [], []
+            return premiums, [], [], [], []
 
     for fill in fills:
         contract = getattr(fill, "contract", None)
         execution = getattr(fill, "execution", None)
-        if not contract or not execution or getattr(contract, "secType", "") != "OPT":
+        if not contract or not execution:
             continue
         if account and getattr(execution, "acctNumber", "") not in {"", account}:
             continue
@@ -454,7 +476,28 @@ def read_option_premiums(ib: IB, account: str = "") -> tuple[dict[str, float], l
         commission_report = getattr(fill, "commissionReport", None)
         commission = abs(safe_float(getattr(commission_report, "commission", None))) if commission_report else 0
         realized_pnl = safe_float(getattr(commission_report, "realizedPNL", None)) if commission_report else 0
+        if abs(realized_pnl) > 1e100:
+            realized_pnl = 0
         day = execution_day(getattr(execution, "time", None))
+
+        if realized_pnl and day:
+            security_type = str(getattr(contract, "secType", "")).upper()
+            category = "Options" if security_type == "OPT" else "Forex" if security_type in {"CASH", "CFD"} else "Stocks"
+            symbol, base_symbol, is_option, option_type, strike_price, expiry = contract_symbol(contract)
+            realized_events.append(
+                {
+                    "date": day,
+                    "assetCategory": category,
+                    "symbol": symbol,
+                    "baseSymbol": base_symbol or symbol,
+                    "optionType": option_type if is_option else None,
+                    "quantity": shares,
+                    "realizedPL": realized_pnl,
+                }
+            )
+
+        if str(getattr(contract, "secType", "")).upper() != "OPT":
+            continue
 
         if not shares or not price:
             continue
@@ -462,6 +505,17 @@ def read_option_premiums(ib: IB, account: str = "") -> tuple[dict[str, float], l
         gross_premium = price * shares * multiplier
         if side in {"SLD", "SELL"}:
             signed_premium = gross_premium - commission
+            symbol, base_symbol, _, option_type, _, _ = contract_symbol(contract)
+            option_sales.append(
+                {
+                    "date": day or "",
+                    "symbol": symbol,
+                    "baseSymbol": base_symbol,
+                    "optionType": option_type or "",
+                    "quantity": shares,
+                    "premium": signed_premium,
+                }
+            )
             month = execution_month(getattr(execution, "time", None))
             if month:
                 summary = monthly.setdefault(
@@ -485,15 +539,16 @@ def read_option_premiums(ib: IB, account: str = "") -> tuple[dict[str, float], l
                 daily[day]["premiumCollected"] = safe_float(daily[day]["premiumCollected"]) + signed_premium
         elif side in {"BOT", "BUY"}:
             signed_premium = -gross_premium - commission
-            if realized_pnl and day in daily:
-                daily[day]["closedPL"] = safe_float(daily[day]["closedPL"]) + realized_pnl
         else:
             continue
+
+        if realized_pnl and day in daily:
+            daily[day]["closedPL"] = safe_float(daily[day]["closedPL"]) + realized_pnl
 
         key = contract_key(contract)
         premiums[key] = premiums.get(key, 0) + signed_premium
 
-    return premiums, [monthly[key] for key in sorted(monthly)], [daily[key] for key in sorted(daily)]
+    return premiums, [monthly[key] for key in sorted(monthly)], [daily[key] for key in sorted(daily)], realized_events, option_sales
 
 
 def build_dashboard(ib: IB) -> dict[str, Any]:
@@ -525,9 +580,35 @@ def build_dashboard(ib: IB) -> dict[str, Any]:
     }
 
     portfolio_items = ib.portfolio()
-    option_premiums, monthly_premium_summary, daily_options_summary = read_option_premiums(ib, account)
-    data["monthlySummary"] = monthly_premium_summary
+    option_premiums, monthly_premium_summary, daily_options_summary, realized_events, option_sales = read_option_premiums(ib, account)
+    data["sessionRealizedEvents"] = realized_events
+    data["sessionOptionSales"] = option_sales
+    monthly_by_key = {row["month"]: row for row in monthly_premium_summary}
+    for event in realized_events:
+        month = str(event["date"])[:7]
+        bucket = monthly_by_key.setdefault(month, ensure_month({}, month))
+        summary_key = {
+            "Options": "optionsPL",
+            "Forex": "forexPL",
+        }.get(str(event["assetCategory"]), "stocksPL")
+        bucket[summary_key] += safe_float(event["realizedPL"])
+    data["monthlySummary"] = [monthly_by_key[key] for key in sorted(monthly_by_key)]
     data["dailyOptionsSummary"] = daily_options_summary
+    for event in realized_events:
+        bucket_key = {
+            "Options": "options",
+            "Forex": "forex",
+        }.get(str(event["assetCategory"]), "stocks")
+        amount = safe_float(event["realizedPL"])
+        data["plSummary"][bucket_key]["realized"] += amount
+        data["closedPositions"].append(
+            {
+                "assetCategory": event["assetCategory"],
+                "symbol": event["symbol"],
+                "realizedPL": amount,
+                "closeDate": event["date"],
+            }
+        )
     gateway_weekly: dict[str, dict[str, Any]] = {}
     for row in daily_options_summary:
         week = week_key(row["date"])
@@ -594,8 +675,12 @@ def build_dashboard(ib: IB) -> dict[str, Any]:
             position["underlyingPrice"] = underlying_prices[position["baseSymbol"]]
 
     total_unrealized = sum(position["unrealizedPL"] for position in data["positions"])
+    total_realized = sum(data["plSummary"][key]["realized"] for key in ("stocks", "options", "forex"))
+    for key in ("stocks", "options", "forex"):
+        data["plSummary"][key]["total"] = data["plSummary"][key]["realized"] + data["plSummary"][key]["unrealized"]
+    data["plSummary"]["total"]["realized"] = total_realized
     data["plSummary"]["total"]["unrealized"] = total_unrealized
-    data["plSummary"]["total"]["total"] = total_unrealized
+    data["plSummary"]["total"]["total"] = total_realized + total_unrealized
     data["navChange"]["markToMarket"] = total_unrealized
 
     return data
@@ -986,6 +1071,50 @@ def apply_flex_weekly_summary(data: dict[str, Any], report: Any) -> None:
     data["weeklySummary"] = [weekly[key] for key in sorted(weekly)]
 
 
+def apply_flex_closed_trade_metrics(data: dict[str, Any], report: Any) -> None:
+    by_symbol: dict[str, dict[str, Any]] = {}
+    for row in first_topic(report, "Lot", "Lots"):
+        if flex_asset_category(attr(row, "assetCategory", "assetClass", default="")) != "Options":
+            continue
+        symbol, _, _, strike, _ = flex_option_symbol(row)
+        if not symbol or not strike:
+            continue
+        quantity = abs(safe_float(attr(row, "quantity", "qty", default=0)))
+        if not quantity:
+            continue
+        currency = str(attr(row, "currency", default=data["accountInfo"]["baseCurrency"]))
+        rate = safe_float(attr(row, "fxRateToBase", default=0)) or data["exchangeRates"].get(currency, 1) or 1
+        premium = abs(safe_float(attr(row, "cost", "costBasis", default=0))) * rate
+        realized = safe_float(attr(row, "fifoPnlRealized", "realizedPnl", default=0)) * rate
+        multiplier = safe_float(attr(row, "multiplier", default=100), 100) or 100
+        risk = strike * quantity * multiplier * rate
+        opened = parse_day(attr(row, "openDateTime", "holdingPeriodDateTime", default=""))
+        closed = parse_day(attr(row, "dateTime", "tradeDate", "reportDate", default=""))
+        days_open = 1
+        if opened and closed:
+            days_open = max(1, (datetime.strptime(closed, "%Y-%m-%d").date() - datetime.strptime(opened, "%Y-%m-%d").date()).days)
+        aroc = (realized / risk) * (365 / days_open) if risk else 0
+        summary = by_symbol.setdefault(symbol, {"symbol": symbol, "premiumCollected": 0.0, "capitalAtRisk": 0.0, "weightedDays": 0.0, "weightedAroc": 0.0, "tradeCount": 0.0})
+        summary["premiumCollected"] += premium
+        summary["capitalAtRisk"] += risk
+        summary["weightedDays"] += days_open * quantity
+        summary["weightedAroc"] += aroc * quantity
+        summary["tradeCount"] += quantity
+
+    data["closedTradeMetrics"] = [
+        {
+            "symbol": summary["symbol"],
+            "premiumCollected": summary["premiumCollected"],
+            "capitalAtRisk": summary["capitalAtRisk"],
+            "daysOpen": summary["weightedDays"] / summary["tradeCount"],
+            "aroc": summary["weightedAroc"] / summary["tradeCount"],
+            "tradeCount": summary["tradeCount"],
+        }
+        for summary in by_symbol.values()
+        if summary["tradeCount"]
+    ]
+
+
 def close_option_lots(
     lots_by_key: dict[tuple[str, str, str, str], list[dict[str, float]]],
     key: tuple[str, str, str, str],
@@ -1040,6 +1169,10 @@ def analyze_flex_option_activity(report: Any, base_currency: str) -> dict[str, A
     expired_put_contracts = 0.0
     winning_put_contracts = 0.0
     realized_short_put_income = 0.0
+    closed_call_contracts = 0.0
+    assigned_call_contracts = 0.0
+    winning_call_contracts = 0.0
+    realized_short_call_income = 0.0
     aroc_trades: list[dict[str, Any]] = []
     realized_events: list[dict[str, Any]] = []
 
@@ -1074,33 +1207,41 @@ def analyze_flex_option_activity(report: Any, base_currency: str) -> dict[str, A
                 )
             elif signed_quantity > 0 and buy_sell in {"BUY", "BOT"} and "BOOKTRADE" not in transaction_type and "A" not in notes and "EP" not in notes:
                 premium, opened_at, matched_quantity = close_option_lots(lots_by_key, key, quantity)
-                net_income = premium + proceeds + commission
                 reported_realized = safe_float(
                     attr(row, "realizedPL", "realizedPnl", "fifoPnlRealized", default=0)
                 ) * rate
-                event_income = net_income if matched_quantity else reported_realized
-                if not matched_quantity and reported_realized:
+                if matched_quantity:
+                    close_ratio = matched_quantity / quantity
+                    net_income = premium + ((proceeds + commission) * close_ratio)
+                    counted_quantity = matched_quantity
+                else:
                     net_income = reported_realized
-                if matched_quantity or reported_realized:
+                    counted_quantity = quantity if reported_realized else 0
+                if counted_quantity:
                     symbol, _, _, _, _ = flex_option_symbol(row)
                     realized_events.append(
                         {
                             "date": parse_day(attr(row, "dateTime", "tradeDate", "reportDate", "date", default="")) or "",
                             "symbol": symbol,
-                            "amount": event_income,
+                            "amount": net_income,
                         }
                     )
-                if option_type == "P":
-                    closed_put_contracts += quantity
+                if option_type == "P" and counted_quantity:
+                    closed_put_contracts += counted_quantity
                     if net_income >= 0:
-                        winning_put_contracts += quantity
+                        winning_put_contracts += counted_quantity
                     realized_short_put_income += net_income
                     _, base_symbol, _, strike_price, expiry = flex_option_symbol(row)
                     multiplier = safe_float(attr(row, "multiplier", default=100), 100) or 100
-                    capital = (strike_price or safe_float(attr(row, "strike", default=0))) * quantity * multiplier * rate
+                    capital = (strike_price or safe_float(attr(row, "strike", default=0))) * counted_quantity * multiplier * rate
                     if net_income > 0 and capital > 0 and opened_at and event_time.year < 9999:
                         days_open = max(1, round((event_time.timestamp() - opened_at) / 86400))
                         aroc_trades.append({"symbol": f"{base_symbol} {expiry} {strike_price:g} P" if strike_price else base_symbol, "premiumCollected": net_income, "capitalAtRisk": capital, "daysOpen": days_open, "aroc": (net_income / capital) * (365 / days_open)})
+                elif option_type == "C" and counted_quantity:
+                    closed_call_contracts += counted_quantity
+                    if net_income >= 0:
+                        winning_call_contracts += counted_quantity
+                    realized_short_call_income += net_income
             continue
 
         transaction_type = str(attr(row, "transactionType", default="")).lower()
@@ -1146,6 +1287,13 @@ def analyze_flex_option_activity(report: Any, base_currency: str) -> dict[str, A
                     days_open = max(1, round((event_time.timestamp() - opened_at) / 86400))
                     aroc_trades.append({"symbol": f"{base_symbol} {expiry} {strike_price:g} P" if strike_price else base_symbol, "premiumCollected": premium, "capitalAtRisk": capital, "daysOpen": days_open, "aroc": (premium / capital) * (365 / days_open)})
             realized_short_put_income += premium
+        elif option_type == "C" and matched_quantity:
+            closed_call_contracts += matched_quantity
+            if transaction_type == "assignment":
+                assigned_call_contracts += matched_quantity
+            else:
+                winning_call_contracts += matched_quantity
+            realized_short_call_income += premium
 
     for key, lots in lots_by_key.items():
         premium = sum(lot["quantity"] * lot["premiumPerContract"] for lot in lots)
@@ -1160,6 +1308,10 @@ def analyze_flex_option_activity(report: Any, base_currency: str) -> dict[str, A
         "expiredPutContracts": expired_put_contracts,
         "winningPutContracts": winning_put_contracts,
         "realizedShortPutIncome": realized_short_put_income,
+        "closedCallContracts": closed_call_contracts,
+        "assignedCallContracts": assigned_call_contracts,
+        "winningCallContracts": winning_call_contracts,
+        "realizedShortCallIncome": realized_short_call_income,
         "arocTrades": aroc_trades,
         "realizedEvents": realized_events,
     }
@@ -1415,6 +1567,19 @@ def apply_flex_option_metrics(data: dict[str, Any], option_activity: dict[str, A
         summary["totalRealizedPL"] = realized_income
         summary["numberOfContracts"] = total_closed
         summary["averagePLPerContract"] = realized_income / total_closed if total_closed else 0
+        summary["hasData"] = True
+
+    call_closed = option_activity.get("closedCallContracts", 0) or 0
+    call_assigned = option_activity.get("assignedCallContracts", 0) or 0
+    call_wins = option_activity.get("winningCallContracts", 0) or 0
+    call_income = option_activity.get("realizedShortCallIncome", 0) or 0
+    if call_closed or call_income:
+        summary = data["shortCallIncomeSummary"]
+        summary["totalRealizedPL"] = call_income
+        summary["numberOfContracts"] = call_closed
+        summary["averagePLPerContract"] = call_income / call_closed if call_closed else 0
+        summary["assignmentRate"] = call_assigned / call_closed if call_closed else 0
+        summary["winRate"] = call_wins / call_closed if call_closed else 0
         summary["hasData"] = True
 
     aroc_trades = option_activity.get("arocTrades", [])
@@ -1673,6 +1838,7 @@ def build_flex_dashboard_from_report(report: Any) -> dict[str, Any]:
     apply_flex_wheel_cycles(data, report, option_activity)
     apply_flex_premium_efficiency(data, report, option_activity)
     apply_flex_weekly_summary(data, report)
+    apply_flex_closed_trade_metrics(data, report)
 
     order_rows = first_topic(report, "Order", "Orders")
     trades = order_rows or first_topic(report, "Trade", "Trades", "TradeConfirm", "Trade Confirms")
@@ -1835,13 +2001,29 @@ def merge_flex_history(live: dict[str, Any], flex: dict[str, Any]) -> dict[str, 
                 merged[row_key] = row
         return [merged[row_key] for row_key in sorted(merged)]
 
-    live["monthlySummary"] = merge_newer_rows(flex["monthlySummary"], live["monthlySummary"], "month")
     live["dailyOptionsSummary"] = merge_newer_rows(flex["dailyOptionsSummary"], live["dailyOptionsSummary"], "date")
     latest_flex_day = max(
         (row["date"] for row in flex["dailyOptionsSummary"] if row.get("premiumCollected") or row.get("closedPL")),
         default="",
     )
-    monthly_by_key = {row["month"]: row for row in live["monthlySummary"]}
+    latest_flex_day = max(
+        latest_flex_day,
+        max(
+            (parse_day(row.get("closeDate")) or "" for row in flex.get("closedPositions", [])),
+            default="",
+        ),
+    )
+    new_realized_events = [
+        event
+        for event in live.get("sessionRealizedEvents", [])
+        if str(event.get("date", "")) > latest_flex_day
+    ]
+    new_option_sales = [
+        event
+        for event in live.get("sessionOptionSales", [])
+        if str(event.get("date", "")) > latest_flex_day
+    ]
+    monthly_by_key = {row["month"]: dict(row) for row in flex["monthlySummary"]}
     for row in live["dailyOptionsSummary"]:
         if row["date"] <= latest_flex_day:
             continue
@@ -1849,12 +2031,89 @@ def merge_flex_history(live: dict[str, Any], flex: dict[str, Any]) -> dict[str, 
         bucket = monthly_by_key.setdefault(month, ensure_month({}, month))
         bucket["optionsPremium"] += row.get("premiumCollected", 0)
         bucket["optionsPL"] += row.get("closedPL", 0)
+    for event in new_realized_events:
+        category = str(event.get("assetCategory", ""))
+        if category == "Options":
+            continue
+        month = str(event.get("date", ""))[:7]
+        if not month:
+            continue
+        bucket = monthly_by_key.setdefault(month, ensure_month({}, month))
+        summary_key = "forexPL" if category == "Forex" else "stocksPL"
+        bucket[summary_key] += safe_float(event.get("realizedPL"))
     live["monthlySummary"] = [monthly_by_key[key] for key in sorted(monthly_by_key)]
-    live["closedPositions"] = flex["closedPositions"]
-    live["tickerPL"] = flex["tickerPL"]
-    live["shortPutIncomeSummary"] = flex["shortPutIncomeSummary"]
+    live["closedPositions"] = list(flex["closedPositions"])
+    live["closedPositions"].extend(
+        {
+            "assetCategory": event.get("assetCategory", "Other"),
+            "symbol": event.get("symbol", ""),
+            "realizedPL": safe_float(event.get("realizedPL")),
+            "closeDate": event.get("date", ""),
+        }
+        for event in new_realized_events
+    )
+    ticker_pl = {row["ticker"]: safe_float(row["totalPL"]) for row in flex["tickerPL"]}
+    for event in new_realized_events:
+        ticker = str(event.get("baseSymbol") or event.get("symbol") or "")
+        if ticker:
+            ticker_pl[ticker] = ticker_pl.get(ticker, 0) + safe_float(event.get("realizedPL"))
+    live["tickerPL"] = [
+        {"ticker": ticker, "totalPL": total}
+        for ticker, total in sorted(ticker_pl.items(), key=lambda item: abs(item[1]), reverse=True)
+    ]
+    live["shortPutIncomeSummary"] = dict(flex["shortPutIncomeSummary"])
+    intraday_put_closes = [
+        event
+        for event in new_realized_events
+        if event.get("assetCategory") == "Options" and str(event.get("optionType", "")).upper() == "P"
+    ]
+    if intraday_put_closes:
+        put_summary = live["shortPutIncomeSummary"]
+        put_summary["totalRealizedPL"] += sum(safe_float(event.get("realizedPL")) for event in intraday_put_closes)
+        put_summary["numberOfContracts"] += sum(abs(safe_float(event.get("quantity"))) for event in intraday_put_closes)
+        put_summary["averagePLPerContract"] = (
+            put_summary["totalRealizedPL"] / put_summary["numberOfContracts"]
+            if put_summary["numberOfContracts"] else 0
+        )
+        put_summary["hasData"] = True
+    live["shortCallIncomeSummary"] = dict(flex.get("shortCallIncomeSummary", empty_dashboard()["shortCallIncomeSummary"]))
+    intraday_call_closes = [
+        event
+        for event in new_realized_events
+        if event.get("assetCategory") == "Options" and str(event.get("optionType", "")).upper() == "C"
+    ]
+    if intraday_call_closes:
+        call_summary = live["shortCallIncomeSummary"]
+        added_contracts = sum(abs(safe_float(event.get("quantity"))) for event in intraday_call_closes)
+        added_wins = sum(
+            abs(safe_float(event.get("quantity")))
+            for event in intraday_call_closes
+            if safe_float(event.get("realizedPL")) >= 0
+        )
+        prior_wins = call_summary["winRate"] * call_summary["numberOfContracts"]
+        call_summary["totalRealizedPL"] += sum(safe_float(event.get("realizedPL")) for event in intraday_call_closes)
+        call_summary["numberOfContracts"] += added_contracts
+        call_summary["averagePLPerContract"] = call_summary["totalRealizedPL"] / call_summary["numberOfContracts"]
+        call_summary["winRate"] = (prior_wins + added_wins) / call_summary["numberOfContracts"]
+        call_summary["assignmentRate"] = (
+            call_summary["assignmentRate"] * (call_summary["numberOfContracts"] - added_contracts) / call_summary["numberOfContracts"]
+        )
+        call_summary["hasData"] = True
     live["arocAnalysis"] = flex["arocAnalysis"]
-    live["optionsStrategyMetrics"] = flex["optionsStrategyMetrics"]
+    live["optionsStrategyMetrics"] = dict(flex["optionsStrategyMetrics"])
+    if intraday_put_closes:
+        strategy = live["optionsStrategyMetrics"]
+        added_contracts = sum(abs(safe_float(event.get("quantity"))) for event in intraday_put_closes)
+        added_wins = sum(
+            abs(safe_float(event.get("quantity")))
+            for event in intraday_put_closes
+            if safe_float(event.get("realizedPL")) >= 0
+        )
+        prior_assignments = strategy.get("assignmentRate", 0) * strategy.get("totalClosed", 0)
+        strategy["totalClosed"] += added_contracts
+        strategy["wins"] += added_wins
+        strategy["winRate"] = strategy["wins"] / strategy["totalClosed"] if strategy["totalClosed"] else 0
+        strategy["assignmentRate"] = prior_assignments / strategy["totalClosed"] if strategy["totalClosed"] else 0
     live["wheelCycleAnalysis"] = flex["wheelCycleAnalysis"]
     live["equityHistory"] = flex.get("equityHistory", [])
     live["premiumEfficiency"] = flex.get("premiumEfficiency", [])
@@ -1867,7 +2126,17 @@ def merge_flex_history(live: dict[str, Any], flex: dict[str, Any]) -> dict[str, 
             bucket = weekly_by_key.setdefault(week, ensure_week({}, week))
             bucket["optionsPremium"] += row.get("premiumCollected", 0)
             bucket["optionsPL"] += row.get("closedPL", 0)
+    for event in new_realized_events:
+        category = str(event.get("assetCategory", ""))
+        if category == "Options":
+            continue
+        week = week_key(event.get("date", ""))
+        if week:
+            bucket = weekly_by_key.setdefault(week, ensure_week({}, week))
+            summary_key = "forexPL" if category == "Forex" else "stocksPL"
+            bucket[summary_key] += safe_float(event.get("realizedPL"))
     live["weeklySummary"] = [weekly_by_key[key] for key in sorted(weekly_by_key)]
+    live["closedTradeMetrics"] = flex.get("closedTradeMetrics", [])
     live["historyStatus"] = {
         "source": "gateway+flex",
         "complete": flex.get("historyStatus", {}).get("complete", False),
@@ -1889,6 +2158,25 @@ def merge_flex_history(live: dict[str, Any], flex: dict[str, Any]) -> dict[str, 
         cycle["unrealizedStockPL"] = cycle["currentStockValue"] - cycle["netAssignmentCost"]
         cycle["currentTotalPL"] = cycle["unrealizedStockPL"] + cycle["totalCallPremium"]
 
+        open_call_symbols = {
+            position["symbol"]
+            for position in live["positions"]
+            if position["isOption"]
+            and position.get("optionType") == "C"
+            and position["quantity"] < 0
+            and position.get("baseSymbol") == cycle["symbol"]
+        }
+        new_call_premium = sum(
+            safe_float(event.get("premium"))
+            for event in new_option_sales
+            if event.get("optionType") == "C"
+            and event.get("baseSymbol") == cycle["symbol"]
+            and event.get("symbol") in open_call_symbols
+        )
+        if new_call_premium:
+            cycle["totalCallPremium"] += new_call_premium
+            cycle["currentTotalPL"] += new_call_premium
+
     if not live["positions"] and flex["positions"]:
         live["positions"] = flex["positions"]
     if not live["totalNAV"] and flex["totalNAV"]:
@@ -1902,8 +2190,20 @@ def merge_flex_history(live: dict[str, Any], flex: dict[str, Any]) -> dict[str, 
             live["navChange"][key] = value
 
     for key in ("stocks", "options", "forex", "total"):
-        live["plSummary"][key]["realized"] = flex["plSummary"][key]["realized"]
+        if key == "total":
+            intraday_realized = sum(safe_float(event.get("realizedPL")) for event in new_realized_events)
+        else:
+            category = {"stocks": "Stocks", "options": "Options", "forex": "Forex"}[key]
+            intraday_realized = sum(
+                safe_float(event.get("realizedPL"))
+                for event in new_realized_events
+                if event.get("assetCategory") == category
+            )
+        live["plSummary"][key]["realized"] = flex["plSummary"][key]["realized"] + intraday_realized
         live["plSummary"][key]["total"] = live["plSummary"][key]["realized"] + live["plSummary"][key]["unrealized"]
+
+    live.pop("sessionRealizedEvents", None)
+    live.pop("sessionOptionSales", None)
 
     if flex["accountInfo"]["period"]:
         live["accountInfo"]["period"] = flex["accountInfo"]["period"]
