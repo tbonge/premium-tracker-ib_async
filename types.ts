@@ -82,6 +82,7 @@ export interface WheelCycle {
   currency: string;
   initialPutPremium: number;
   totalCallPremium: number;
+  otherIncome?: number;
   stockPL: number;
   totalPL: number;
   durationDays: number;
@@ -110,6 +111,7 @@ export interface PendingWheelCycle {
   assignmentCost: number;
   netAssignmentCost: number;
   totalCallPremium: number;
+  otherIncome?: number;
   annualizedReturn?: number;
   currentStockValue: number;
   unrealizedStockPL: number;

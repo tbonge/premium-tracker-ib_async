@@ -396,7 +396,7 @@ const App: React.FC = () => {
           .reduce((sum, event) => sum + safeNumber(event.premium ?? event.premiumCollected), 0);
         const totalCallPremium = cycle.totalCallPremium + newCallPremium;
         const unrealizedStockPL = currentStockValue - cycle.netAssignmentCost;
-        const currentTotalPL = unrealizedStockPL + totalCallPremium;
+        const currentTotalPL = unrealizedStockPL + totalCallPremium + (cycle.otherIncome || 0);
         const start = parseDateKey(cycle.startDate).getTime();
         const durationDays = Number.isFinite(start) ? Math.max(1, Math.round((Date.now() - start) / 86400000)) : 1;
         return {

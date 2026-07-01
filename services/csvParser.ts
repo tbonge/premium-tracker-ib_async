@@ -568,12 +568,49 @@ function analyzeWeeklySummary(
 }
 
 
-function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: number }, baseCurrency: string, instrumentMultipliers: Map<string, number>, openPositions: Position[]): WheelCycleAnalysis {
+function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: number }, baseCurrency: string, instrumentMultipliers: Map<string, number>, openPositions: Position[], cashTransactions: any[] = []): WheelCycleAnalysis {
     const completedCycles: WheelCycle[] = [];
     const stockLots = new Map<string, { quantity: number; costBasis: number; grossCostBasis: number; acquisitionDate: Date; coveredShares: number; lotIndex: number }[]>();
     const inProgressCycles = new Map<string, Partial<WheelCycle> & { lotIndex: number }>();
     const openShortPuts = new Map<string, any[]>();
     const pendingPutRollLogs = new Map<string, WheelCycleTrade[]>();
+
+    const wheelIncomeEvents = (cashTransactions || [])
+        .map(row => {
+            const date = parseStatementDate(row['Date/Time'] || row['Date'] || row['Value Date']);
+            const description = String(row['Description'] || row['Type'] || row['Currency Summary'] || '').toUpperCase();
+            const symbol = String(row['Symbol'] || '').trim();
+            const amount = safeParseFloat(row['Amount'] || row['Total'] || row['Interest Paid to Customer']);
+            const rate = rateFor(exchangeRates, row['Currency']);
+            const isWheelIncome = amount !== 0 && (
+                description.includes('DIVIDEND') ||
+                description.includes('SECURITIES LENT') ||
+                description.includes('SYEP') ||
+                description.includes('STOCK YIELD')
+            );
+            return date && isWheelIncome ? { date, symbol, description, amount: amount * rate } : null;
+        })
+        .filter((event): event is { date: Date; symbol: string; description: string; amount: number } => event !== null);
+
+    const incomeForCycle = (symbol: string, startDate: string, endDate?: string) => {
+        const start = parseDateKey(startDate);
+        const end = endDate ? parseDateKey(endDate) : null;
+        if (!start) return { amount: 0, logs: [] as WheelCycleTrade[] };
+        const events = wheelIncomeEvents.filter(event => {
+            if (event.symbol && event.symbol !== symbol) return false;
+            if (!event.symbol && !event.description.includes(symbol.toUpperCase())) return false;
+            if (event.date < start) return false;
+            return !end || event.date <= end;
+        });
+        return {
+            amount: events.reduce((sum, event) => sum + event.amount, 0),
+            logs: events.map(event => ({
+                date: formatDateKey(event.date),
+                description: event.description.includes('DIVIDEND') ? `Dividend (${symbol})` : `Wheel Income (${symbol})`,
+                amount: event.amount,
+            }))
+        };
+    };
 
     const allTrades = trades
         .filter(r => r['DataDiscriminator'] === 'Order' && ['Stocks', 'Equity and Index Options'].includes(r['Asset Category']))
@@ -658,6 +695,7 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                     currency: currency,
                     initialPutPremium: initialPutPremium,
                     totalCallPremium: 0,
+                    otherIncome: 0,
                     stockPL: 0,
                     startDate: trade.parsedDate.toISOString().split('T')[0],
                     lotIndex: lotIndex,
@@ -692,6 +730,7 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                 stockLots.get(baseSymbol)?.push(newLot);
                 inProgressCycles.set(`${baseSymbol}-${lotIndex}`, {
                     symbol: baseSymbol, currency: currency, initialPutPremium: putPremiumRealized, totalCallPremium: 0, stockPL: 0,
+                    otherIncome: 0,
                     startDate: trade.parsedDate.toISOString().split('T')[0], lotIndex: lotIndex, assignmentPrice: strikePrice!, assignmentShares: sharesAcquired,
                     assignmentCost: grossStockCostBasis,
                     netAssignmentCost: effectiveCostBasis,
@@ -799,10 +838,17 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                         });
                     }
 
-                    const totalPL = stockPLValue + (cycle.initialPutPremium || 0) + (cycle.totalCallPremium || 0);
+                    const endDate = trade.parsedDate;
+                    const startDateText = cycle.startDate!;
+                    const endDateText = endDate.toISOString().split('T')[0];
+                    const income = incomeForCycle(baseSymbol, startDateText, endDateText);
+                    const otherIncome = (cycle.otherIncome || 0) + income.amount;
+                    if (cycle.tradeLog && income.logs.length > 0) {
+                        cycle.tradeLog.push(...income.logs);
+                    }
+                    const totalPL = stockPLValue + (cycle.initialPutPremium || 0) + (cycle.totalCallPremium || 0) + otherIncome;
 
                     const startDate = new Date(cycle.startDate!);
-                    const endDate = trade.parsedDate;
                     const durationDays = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
                     const effectiveDurationDays = durationDays > 0 ? durationDays : 1;
                     const returnOnCost = cycle.assignmentCost! > 0 ? totalPL / cycle.assignmentCost! : 0;
@@ -812,13 +858,14 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                         currency: cycle.currency!,
                         initialPutPremium: cycle.initialPutPremium || 0,
                         totalCallPremium: cycle.totalCallPremium || 0,
+                        otherIncome,
                         stockPL: stockPLValue,
                         totalPL: totalPL,
                         durationDays: effectiveDurationDays,
                         returnOnCost,
                         annualizedReturn: returnOnCost * (DAYS_PER_YEAR / effectiveDurationDays),
                         startDate: cycle.startDate!,
-                        endDate: endDate.toISOString().split('T')[0],
+                        endDate: endDateText,
                         assignmentPrice: cycle.assignmentPrice!,
                         assignmentShares: cycle.assignmentShares!,
                         assignmentCost: cycle.assignmentCost!, // Gross cost
@@ -846,7 +893,9 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
             const currentStockValue = pricePerShare * cycleInProgress.assignmentShares!;
             
             const unrealizedStockPL = currentStockValue - cycleInProgress.netAssignmentCost!;
-            const currentTotalPL = unrealizedStockPL + (cycleInProgress.totalCallPremium || 0);
+            const income = incomeForCycle(cycleInProgress.symbol!, cycleInProgress.startDate!);
+            const otherIncome = (cycleInProgress.otherIncome || 0) + income.amount;
+            const currentTotalPL = unrealizedStockPL + (cycleInProgress.totalCallPremium || 0) + otherIncome;
             const startDate = new Date(`${cycleInProgress.startDate!}T00:00:00`);
             const durationDays = Number.isFinite(startDate.getTime())
                 ? Math.max(1, Math.round((Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24)))
@@ -862,11 +911,12 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                 assignmentCost: cycleInProgress.assignmentCost!,
                 netAssignmentCost: cycleInProgress.netAssignmentCost!,
                 totalCallPremium: cycleInProgress.totalCallPremium || 0,
+                otherIncome,
                 annualizedReturn: cycleInProgress.assignmentCost! > 0 ? (currentTotalPL / cycleInProgress.assignmentCost!) * (DAYS_PER_YEAR / durationDays) : 0,
                 currentStockValue,
                 unrealizedStockPL,
                 currentTotalPL,
-                tradeLog: cycleInProgress.tradeLog || []
+                tradeLog: [...(cycleInProgress.tradeLog || []), ...income.logs]
             });
         }
     }
@@ -1213,7 +1263,14 @@ export function parseIbkrCsv(csvString: string): ParsedData {
         data.shortPutIncomeSummary = analyzeShortOptionIncome(sections['Trades'], data.exchangeRates, 'P');
         const calls = analyzeShortOptionIncome(sections['Trades'], data.exchangeRates, 'C');
         data.shortCallIncomeSummary = { ...calls, assignmentRate: 0, winRate: 0 };
-        data.wheelCycleAnalysis = analyzeWheelCycles(sections['Trades'], data.exchangeRates, data.accountInfo.baseCurrency, instrumentMultipliers, data.positions);
+        data.wheelCycleAnalysis = analyzeWheelCycles(
+            sections['Trades'],
+            data.exchangeRates,
+            data.accountInfo.baseCurrency,
+            instrumentMultipliers,
+            data.positions,
+            sections['Cash Transactions'] || sections['Cash Transaction'] || []
+        );
         const openTrades = new Map<string, any[]>();
         const arocTrades: ArocTrade[] = [];
         
@@ -1230,6 +1287,38 @@ export function parseIbkrCsv(csvString: string): ParsedData {
             }))
             .filter(trade => trade.parsedDate !== null)
             .sort((a, b) => a.parsedDate!.getTime() - b.parsedDate!.getTime());
+
+        const longPutOpenLegs = allOptionTrades
+            .map(trade => {
+                const parsed = parseOptionSymbol(trade.Symbol);
+                return { trade, parsed, quantity: safeParseFloat(trade.Quantity) };
+            })
+            .filter(item =>
+                item.parsed.isOption &&
+                item.parsed.optionType === 'P' &&
+                item.quantity > 0 &&
+                (item.trade.Code || '').includes('O') &&
+                item.parsed.strikePrice
+            );
+
+        const estimatePutCapitalAtRisk = (symbol: string, closeDate: Date, contractsClosed: number, exchangeRate: number, fallbackStrike: number): number => {
+            const shortLeg = parseOptionSymbol(symbol);
+            const multiplier = instrumentMultipliers.get(symbol.trim()) || DEFAULT_OPTION_MULTIPLIER;
+            const matchingLong = longPutOpenLegs
+                .filter(item =>
+                    item.trade.parsedDate <= closeDate &&
+                    item.parsed.baseSymbol === shortLeg.baseSymbol &&
+                    item.parsed.expiry === shortLeg.expiry &&
+                    item.trade.Currency === allOptionTrades.find(trade => trade.Symbol === symbol)?.Currency &&
+                    (item.parsed.strikePrice || 0) < fallbackStrike
+                )
+                .sort((a, b) => (b.parsed.strikePrice || 0) - (a.parsed.strikePrice || 0))[0];
+
+            const strikeWidth = matchingLong?.parsed.strikePrice
+                ? fallbackStrike - matchingLong.parsed.strikePrice
+                : fallbackStrike;
+            return strikeWidth * contractsClosed * multiplier * exchangeRate;
+        };
 
         for (const trade of allOptionTrades) {
             const quantity = safeParseFloat(trade['Quantity']);
@@ -1279,9 +1368,7 @@ export function parseIbkrCsv(csvString: string): ParsedData {
                     const premiumInBase = premiumCollected * exchangeRate;
 
                     if (isOption && optionType === 'P' && strikePrice) {
-                        const multiplier = instrumentMultipliers.get(symbol.trim()) || DEFAULT_OPTION_MULTIPLIER;
-                        const capitalAtRisk = strikePrice * quantity * multiplier;
-                        const capitalAtRiskInBase = capitalAtRisk * exchangeRate;
+                        const capitalAtRiskInBase = estimatePutCapitalAtRisk(symbol, closeDate, numContractsClosed, exchangeRate, strikePrice);
 
                         if (capitalAtRiskInBase > 0 && Number.isFinite(premiumInBase)) {
                             const aroc = (premiumInBase / capitalAtRiskInBase) * (DAYS_PER_YEAR / daysOpen);
@@ -1299,11 +1386,30 @@ export function parseIbkrCsv(csvString: string): ParsedData {
         }
         
         if (arocTrades.length > 0) {
-            const totalAroc = arocTrades.reduce((sum, t) => sum + t.aroc, 0);
+            const totalWeightedAroc = arocTrades.reduce((sum, t) => sum + (t.aroc * t.capitalAtRisk * t.daysOpen), 0);
+            const totalCapitalDays = arocTrades.reduce((sum, t) => sum + (t.capitalAtRisk * t.daysOpen), 0);
             data.arocAnalysis = {
-                averageAroc: totalAroc / arocTrades.length,
+                averageAroc: totalCapitalDays > 0 ? totalWeightedAroc / totalCapitalDays : 0,
                 trades: arocTrades,
             };
+            const bySymbol = new Map<string, { symbol: string; premiumCollected: number; capitalAtRisk: number; weightedDays: number; weightedAroc: number; tradeCount: number }>();
+            arocTrades.forEach(trade => {
+                const summary = bySymbol.get(trade.symbol) || { symbol: trade.symbol, premiumCollected: 0, capitalAtRisk: 0, weightedDays: 0, weightedAroc: 0, tradeCount: 0 };
+                summary.premiumCollected += trade.premiumCollected;
+                summary.capitalAtRisk += trade.capitalAtRisk;
+                summary.weightedDays += trade.daysOpen * trade.capitalAtRisk;
+                summary.weightedAroc += trade.aroc * trade.capitalAtRisk * trade.daysOpen;
+                summary.tradeCount += 1;
+                bySymbol.set(trade.symbol, summary);
+            });
+            data.closedTradeMetrics = Array.from(bySymbol.values()).map(summary => ({
+                symbol: summary.symbol,
+                premiumCollected: summary.premiumCollected,
+                capitalAtRisk: summary.capitalAtRisk,
+                daysOpen: summary.capitalAtRisk > 0 ? summary.weightedDays / summary.capitalAtRisk : 0,
+                aroc: summary.weightedDays > 0 ? summary.weightedAroc / summary.weightedDays : 0,
+                tradeCount: summary.tradeCount,
+            }));
         }
         
         data.optionsStrategyMetrics = {

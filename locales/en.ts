@@ -430,6 +430,7 @@ export const en = {
                     startDate: "Start Date",
                     netCostBasis: "Net Cost Basis",
                     callPremium: "Call Premium",
+                    otherIncome: "Other Income",
                     currentValue: "Current Value",
                     unrealizedStockPL: "Unrealized Stock P/L",
                     currentTotalPL: "Current Total P/L",
@@ -438,7 +439,7 @@ export const en = {
                 tooltips: {
                     startDate: "The date you were assigned the shares, marking the start of the cycle.",
                     netCostBasis: "The effective cost of your shares after subtracting the premium from the initial put (Gross Cost - Put Premium).",
-                    currentTotalPL: "The current unrealized P/L for the entire cycle if you were to close it now (Unrealized Stock P/L + Total Call Premium)."
+                    currentTotalPL: "The current unrealized P/L for the entire cycle if you were to close it now (Unrealized Stock P/L + Total Call Premium + Other Income)."
                 }
             },
             completed: {
@@ -449,6 +450,7 @@ export const en = {
                     endDate: "End Date",
                     duration: "Duration (Days)",
                     callPremium: "Call Premium",
+                    otherIncome: "Other Income",
                     stockPL: "Stock P/L",
                     totalPL: "Total P/L",
                     returnOnCost: "Return on Cost",
@@ -457,7 +459,7 @@ export const en = {
                 tooltips: {
                     endDate: "End Date",
                     duration: "Duration (Days)",
-                    totalPL: "The final profit or loss for the entire cycle: stock sale less gross assignment cost, plus put and call premium.",
+                    totalPL: "The final profit or loss for the entire cycle: stock sale less gross assignment cost, plus put premium, call premium, and other attributed income.",
                     returnOnCost: "The total P/L of the cycle as a percentage of the gross assignment cost.",
                     annualizedReturn: "Return on cost annualized by cycle duration."
                 }

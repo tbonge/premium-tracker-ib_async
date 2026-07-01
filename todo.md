@@ -69,6 +69,8 @@ Status: Completed in the Section 1 implementation pass. Remaining refinements sh
 
 ## 2. Short Option and Wheel Analytics
 
+Status: Completed in the Section 2 implementation pass with weighted AROC, spread-aware put capital estimates in CSV analytics, closed trade metric summaries, and wheel other-income attribution.
+
 ### 2.1 Rebuild AROC and win-rate metrics from strategy lifecycle events
 
 - **Files:** `services/csvParser.ts`, `scripts/load_ib_gateway.py`, `components/dashboard/ClosedPositions.tsx`
