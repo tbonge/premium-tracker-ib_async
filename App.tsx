@@ -1,6 +1,6 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { DailyOptionsSummary, ParsedData, WeeklySummary } from './types';
+import { ClosedPosition, DailyOptionsSummary, MonthlySummary, ParsedData, WeeklySummary } from './types';
 import { parseIbkrCsv } from './services/csvParser';
 import FileUpload from './components/FileUpload';
 import Dashboard from './components/Dashboard';
@@ -8,7 +8,11 @@ import LabsDashboard from './components/LabsDashboard';
 import { LoaderIcon, AlertTriangleIcon } from './constants';
 import { useLocalization } from './context/LocalizationContext';
 
-const parseDateKey = (dateKey: string): Date => new Date(`${dateKey}T00:00:00`);
+const parseDateKey = (dateKey: string): Date => {
+  const match = dateKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return new Date(dateKey);
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12);
+};
 
 const formatDateKey = (date: Date): string => {
   return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
@@ -31,6 +35,122 @@ const getWeekKey = (dateKey: string): string => {
   const date = parseDateKey(dateKey);
   date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
   return formatDateKey(date);
+};
+
+type SessionRealizedEvent = {
+  date?: string;
+  assetCategory?: string;
+  symbol?: string;
+  baseSymbol?: string;
+  optionType?: 'P' | 'C' | string;
+  quantity?: number;
+  realizedPL?: number;
+};
+
+type SessionOptionSale = {
+  date?: string;
+  symbol?: string;
+  baseSymbol?: string;
+  optionType?: 'P' | 'C' | string;
+  premium?: number;
+  premiumCollected?: number;
+};
+
+type GatewayParsedData = ParsedData & {
+  sessionRealizedEvents?: SessionRealizedEvent[];
+  sessionOptionSales?: SessionOptionSale[];
+};
+
+const safeNumber = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) ? value : 0;
+
+const emptyMonthlySummary = (month: string): MonthlySummary => ({
+  month,
+  optionsPL: 0,
+  optionsPremium: 0,
+  stocksPL: 0,
+  forexPL: 0,
+  syepIncome: 0,
+  interest: 0,
+  commissions: 0,
+  fees: 0,
+  interestPaid: 0,
+  salesTax: 0,
+});
+
+const latestStatementHistoryDate = (data: ParsedData): string => {
+  const candidates = [
+    getLatestActiveDateKey(data.dailyOptionsSummary),
+    ...data.closedPositions.map(position => position.closeDate?.slice(0, 10)).filter(Boolean) as string[],
+    ...data.monthlySummary.map(row => row.month ? `${row.month}-31` : '').filter(Boolean),
+  ];
+  return candidates.reduce((latest, candidate) => candidate && candidate > latest ? candidate : latest, '');
+};
+
+const mergeMonthlySummary = (
+  statementData: ParsedData,
+  liveData: GatewayParsedData,
+  mergedDaily: DailyOptionsSummary[],
+  latestStatementDay: string
+): MonthlySummary[] => {
+  const byMonth = new Map(statementData.monthlySummary.map(row => [row.month, { ...row }]));
+
+  mergedDaily
+    .filter(row => !latestStatementDay || row.date > latestStatementDay)
+    .forEach(row => {
+      const month = row.date.slice(0, 7);
+      const bucket = byMonth.get(month) || emptyMonthlySummary(month);
+      bucket.optionsPremium += row.premiumCollected;
+      bucket.optionsPL += row.closedPL;
+      byMonth.set(month, bucket);
+    });
+
+  (liveData.sessionRealizedEvents || [])
+    .filter(event => event.date && (!latestStatementDay || event.date > latestStatementDay) && event.assetCategory !== 'Options')
+    .forEach(event => {
+      const month = event.date!.slice(0, 7);
+      const bucket = byMonth.get(month) || emptyMonthlySummary(month);
+      const key = event.assetCategory === 'Forex' ? 'forexPL' : 'stocksPL';
+      bucket[key] += safeNumber(event.realizedPL);
+      byMonth.set(month, bucket);
+    });
+
+  return [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month));
+};
+
+const mergeClosedPositions = (statementData: ParsedData, liveData: GatewayParsedData, latestStatementDay: string): ClosedPosition[] => {
+  const rows = [...statementData.closedPositions];
+  const seen = new Set(rows.map(row => `${row.closeDate || ''}|${row.assetCategory}|${row.symbol}|${row.realizedPL}`));
+
+  (liveData.sessionRealizedEvents || [])
+    .filter(event => event.date && (!latestStatementDay || event.date > latestStatementDay))
+    .forEach(event => {
+      const row: ClosedPosition = {
+        assetCategory: event.assetCategory || 'Other',
+        symbol: event.symbol || '',
+        realizedPL: safeNumber(event.realizedPL),
+        closeDate: event.date,
+      };
+      const key = `${row.closeDate || ''}|${row.assetCategory}|${row.symbol}|${row.realizedPL}`;
+      if (!seen.has(key)) {
+        rows.push(row);
+        seen.add(key);
+      }
+    });
+
+  return rows;
+};
+
+const mergeTickerPL = (statementData: ParsedData, liveData: GatewayParsedData, latestStatementDay: string) => {
+  const totals = new Map(statementData.tickerPL.map(row => [row.ticker, row.totalPL]));
+  (liveData.sessionRealizedEvents || [])
+    .filter(event => event.date && (!latestStatementDay || event.date > latestStatementDay))
+    .forEach(event => {
+      const ticker = event.baseSymbol || event.symbol || '';
+      if (ticker) totals.set(ticker, (totals.get(ticker) || 0) + safeNumber(event.realizedPL));
+    });
+  return [...totals.entries()]
+    .map(([ticker, totalPL]) => ({ ticker, totalPL }))
+    .sort((a, b) => Math.abs(b.totalPL) - Math.abs(a.totalPL));
 };
 
 const mergeWeeklyOptionsSummary = (
@@ -204,32 +324,41 @@ const App: React.FC = () => {
     setIsRefreshing(false);
   };
 
-  const mergeStatementWithGatewaySnapshot = useCallback((statementData: ParsedData, liveData: ParsedData): ParsedData => {
+  const mergeStatementWithGatewaySnapshot = useCallback((statementData: ParsedData, liveData: GatewayParsedData): ParsedData => {
     const liveUpdatedAt = liveData.accountInfo.period || new Date().toLocaleString();
     const mergedPeriod = statementData.accountInfo.period
       ? `${statementData.accountInfo.period} • ${liveUpdatedAt}`
       : liveUpdatedAt;
+    const latestStatementDay = latestStatementHistoryDate(statementData);
+    const newRealizedEvents = (liveData.sessionRealizedEvents || [])
+      .filter(event => event.date && (!latestStatementDay || event.date > latestStatementDay));
+    const intradayRealized = {
+      stocks: newRealizedEvents.filter(event => event.assetCategory === 'Stocks').reduce((sum, event) => sum + safeNumber(event.realizedPL), 0),
+      options: newRealizedEvents.filter(event => event.assetCategory === 'Options').reduce((sum, event) => sum + safeNumber(event.realizedPL), 0),
+      forex: newRealizedEvents.filter(event => event.assetCategory === 'Forex').reduce((sum, event) => sum + safeNumber(event.realizedPL), 0),
+      total: newRealizedEvents.reduce((sum, event) => sum + safeNumber(event.realizedPL), 0),
+    };
 
     const mergedPlSummary = {
       stocks: {
-        realized: statementData.plSummary.stocks.realized,
+        realized: statementData.plSummary.stocks.realized + intradayRealized.stocks,
         unrealized: liveData.plSummary.stocks.unrealized,
-        total: statementData.plSummary.stocks.realized + liveData.plSummary.stocks.unrealized,
+        total: statementData.plSummary.stocks.realized + intradayRealized.stocks + liveData.plSummary.stocks.unrealized,
       },
       options: {
-        realized: statementData.plSummary.options.realized,
+        realized: statementData.plSummary.options.realized + intradayRealized.options,
         unrealized: liveData.plSummary.options.unrealized,
-        total: statementData.plSummary.options.realized + liveData.plSummary.options.unrealized,
+        total: statementData.plSummary.options.realized + intradayRealized.options + liveData.plSummary.options.unrealized,
       },
       forex: {
-        realized: statementData.plSummary.forex.realized,
+        realized: statementData.plSummary.forex.realized + intradayRealized.forex,
         unrealized: liveData.plSummary.forex.unrealized,
-        total: statementData.plSummary.forex.realized + liveData.plSummary.forex.unrealized,
+        total: statementData.plSummary.forex.realized + intradayRealized.forex + liveData.plSummary.forex.unrealized,
       },
       total: {
-        realized: statementData.plSummary.total.realized,
+        realized: statementData.plSummary.total.realized + intradayRealized.total,
         unrealized: liveData.plSummary.total.unrealized,
-        total: statementData.plSummary.total.realized + liveData.plSummary.total.unrealized,
+        total: statementData.plSummary.total.realized + intradayRealized.total + liveData.plSummary.total.unrealized,
       },
     };
 
@@ -244,6 +373,42 @@ const App: React.FC = () => {
 
     const hasLiveAccountState = liveData.totalNAV > 0 || liveData.positions.length > 0 || liveData.nav.cash !== 0;
     const mergedDailyOptions = mergeDailyOptionsSummary(statementData.dailyOptionsSummary, liveData.dailyOptionsSummary);
+    const mergedMonthly = mergeMonthlySummary(statementData, liveData, mergedDailyOptions, latestStatementDay);
+    const mergedClosedPositions = mergeClosedPositions(statementData, liveData, latestStatementDay);
+    const mergedTickerPL = mergeTickerPL(statementData, liveData, latestStatementDay);
+    const mergedWheelCycleAnalysis = {
+      completedCycles: statementData.wheelCycleAnalysis.completedCycles,
+      pendingCycles: statementData.wheelCycleAnalysis.pendingCycles.map(cycle => {
+        const stockPosition = liveData.positions.find(position => !position.isOption && position.symbol === cycle.symbol);
+        if (!stockPosition || stockPosition.quantity === 0) return cycle;
+
+        const exchangeRate = liveData.exchangeRates[stockPosition.currency] || statementData.exchangeRates[stockPosition.currency] || 1;
+        const currentPrice = stockPosition.closePrice || (stockPosition.value / stockPosition.quantity);
+        const currentStockValue = currentPrice * cycle.assignmentShares * exchangeRate;
+        const openCallSymbols = new Set(liveData.positions
+          .filter(position => position.isOption && position.optionType === 'C' && position.quantity < 0 && position.baseSymbol === cycle.symbol)
+          .map(position => position.symbol));
+        const newCallPremium = (liveData.sessionOptionSales || [])
+          .filter(event => event.date && (!latestStatementDay || event.date > latestStatementDay)
+            && event.optionType === 'C'
+            && event.baseSymbol === cycle.symbol
+            && (!event.symbol || openCallSymbols.has(event.symbol)))
+          .reduce((sum, event) => sum + safeNumber(event.premium ?? event.premiumCollected), 0);
+        const totalCallPremium = cycle.totalCallPremium + newCallPremium;
+        const unrealizedStockPL = currentStockValue - cycle.netAssignmentCost;
+        const currentTotalPL = unrealizedStockPL + totalCallPremium;
+        const start = parseDateKey(cycle.startDate).getTime();
+        const durationDays = Number.isFinite(start) ? Math.max(1, Math.round((Date.now() - start) / 86400000)) : 1;
+        return {
+          ...cycle,
+          totalCallPremium,
+          currentStockValue,
+          unrealizedStockPL,
+          currentTotalPL,
+          annualizedReturn: cycle.assignmentCost > 0 ? (currentTotalPL / cycle.assignmentCost) * (365 / durationDays) : 0,
+        };
+      }),
+    };
 
     return {
       ...statementData,
@@ -263,13 +428,22 @@ const App: React.FC = () => {
       totalNAV: liveData.totalNAV || statementData.totalNAV,
       navChange,
       syepIncome: statementData.syepIncome,
+      monthlySummary: mergedMonthly,
       dailyOptionsSummary: mergedDailyOptions,
       weeklySummary: mergeWeeklyOptionsSummary(statementData.weeklySummary, statementData.dailyOptionsSummary, mergedDailyOptions),
+      closedPositions: mergedClosedPositions,
+      tickerPL: mergedTickerPL,
+      wheelCycleAnalysis: mergedWheelCycleAnalysis,
       marginLiquidity: liveData.marginLiquidity || statementData.marginLiquidity,
+      historyStatus: {
+        source: 'gateway+flex',
+        complete: statementData.historyStatus?.complete ?? false,
+        warnings: [...(statementData.historyStatus?.warnings || []), ...(liveData.historyStatus?.warnings || [])],
+      },
     };
   }, []);
 
-  const loadCurrentGatewaySnapshot = useCallback(async (): Promise<ParsedData | null> => {
+  const loadCurrentGatewaySnapshot = useCallback(async (): Promise<GatewayParsedData | null> => {
     const response = await fetch('/api/ib/current', { method: 'POST' });
 
     if (!response.ok) {
@@ -281,7 +455,7 @@ const App: React.FC = () => {
       return null;
     }
 
-    return liveData as ParsedData;
+    return liveData as GatewayParsedData;
   }, []);
 
   const enrichStatementWithGatewaySnapshot = useCallback(async (data: ParsedData): Promise<ParsedData> => {

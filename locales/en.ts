@@ -68,11 +68,39 @@ export const en = {
         }
     },
     dashboard: {
+        cashSettled: {
+            title: "Cash-Settled Options",
+            description: "SPX, SPXW, and XSP short-option strategies settle in cash and cannot result in share assignment. Premium and P/L include matched protective legs.",
+            contract: "Contract", expiry: "Expiry", type: "Type", quantity: "Qty", strike: "Strike",
+            currentPrice: "Underlying", netPremium: "Net Premium",
+            unrealizedPL: "Unrealized P/L", maxLoss: "Max Loss", put: "Put", call: "Call", undefined: "Undefined"
+        },
         buyToClose: {
             title: "Buy to Close Candidates",
             description: "Short puts with at least {{threshold}} estimated premium capture. Covered calls are excluded and remain open for assignment.",
             contract: "Put Contract", strike: "Strike", underlying: "Underlying", breakeven: "Breakeven",
             premium: "Premium Collected", closeCost: "Estimated Close Cost", capturedProfit: "Profit Captured", capture: "Capture"
+        },
+        settings: {
+            capture: "Profit capture",
+            rollDelta: "Roll delta",
+            urgentDte: "Urgent DTE",
+            rollDte: "Roll review DTE",
+            spreadLoss: "Spread loss"
+        },
+        actionRequired: {
+            title: "Action Required",
+            empty: "No short-put actions match the current thresholds.",
+            summary: { urgent: "urgent assignment", profit: "profit taking", roll: "roll review", spreads: "spread defense" },
+            headers: { action: "Action", contract: "Contract", reason: "Reason", metric: "Metric", underlying: "Underlying", cash: "Assignment Cash" },
+            actions: { rollOrClose: "Roll / Close", closeForProfit: "Close", roll: "Roll", manageSpread: "Defend Spread" },
+            reasons: {
+                assignment: "ITM near expiration",
+                capture: "Profit capture threshold met",
+                dte: "Low DTE with meaningful capture",
+                delta: "Delta above roll threshold",
+                spreadLoss: "Spread approaching max loss"
+            }
         },
         marginRisk: {
             title: "Margin & Liquidity Risk",
@@ -84,7 +112,7 @@ export const en = {
         },
         expirationCalendar: {
             title: "Expiration Calendar", expiry: "Expiration", tickers: "Tickers", puts: "Short Puts",
-            calls: "Short Calls", assignmentExposure: "Put Assignment Exposure", premium: "Premium"
+            calls: "Short Calls", assignmentExposure: "Put Assignment Cash", premium: "Net Premium"
         },
         navHistory: { title: "NAV & Drawdown History", change: "Period Change", maxDrawdown: "Max Drawdown" },
         wheelTimeline: {
@@ -117,11 +145,14 @@ export const en = {
             assigned: "Date",
             shares: "Qty",
             availableShares: "Uncovered",
+            coverage: "Coverage",
             openCalls: "Call Strike",
             average: "Avg.",
             assignmentPrice: "Assigned @",
             breakeven: "Adj. Basis",
             currentPrice: "Price",
+            minStrike: "Min Strike",
+            targetStrike: "Target Strike",
             daysHeld: "Days",
             callPremium: "Call Prem.",
             totalPL: "P/L"
@@ -234,12 +265,12 @@ export const en = {
             cashBalance: { title: "Current Cash Balance", description: "Your available cash for assignments." },
             likelyRisk: {
                 title: "Likely Assignment Risk",
-                assignmentValue: { title: "Assignment Value (ITM)", description: "For puts that are In-The-Money or have a negative P/L.", tooltip: "The total cash required to purchase shares for all short puts that are currently In-The-Money (ITM)." },
+                assignmentValue: { title: "Likely Assignment Cash", description: "Cash required to acquire shares from physical-settlement puts with elevated assignment risk.", tooltip: "Full short-strike assignment cash. Spreads below their protective strike and cash-settled SPX options are excluded because they do not retain shares at expiration." },
                 cashShortfall: { title: "Cash Shortfall", description: "Funds needed for these likely assignments.", tooltip: "The amount of additional cash required if all 'Likely' (ITM) puts were assigned today. Calculated as (Assignment Value - Cash Balance)." }
             },
             unlikelyRisk: {
                 title: "Unlikely Assignment Risk",
-                assignmentValue: { title: "Assignment Value (OTM)", description: "For puts that are Out-of-The-Money or have a positive P/L.", tooltip: "The total cash required to purchase shares for all short puts that are currently Out-of-The-Money (OTM)." },
+                assignmentValue: { title: "Potential Assignment Cash", description: "Full short-strike cash requirement for lower-risk physical-settlement puts.", tooltip: "A negative P/L alone does not imply assignment risk. Cash-settled and below-protective-leg spreads are excluded." },
                 additionalShortfall: { title: "Additional Shortfall", description: "More funds needed if these puts are also assigned.", tooltip: "The amount of additional cash required if all 'Unlikely' (OTM) puts were also assigned, after accounting for cash used on likely assignments." }
             },
             atRiskPositions: {
@@ -247,7 +278,15 @@ export const en = {
                 assignmentDate: "Assignment Date",
                 currentPrice: "Current Price",
                 currentPriceTooltip: "Current price or the latest available closing price for the underlying stock.",
+                assignmentCash: "Assignment Cash",
                 unknownDate: "Unknown"
+            },
+            spreads: {
+                title: "Put Spread Expiration Outcomes",
+                description: "Projected expiration result using the current underlying price: above the short strike expires, between strikes retains shares, and below the protective strike realizes the defined cash loss without retaining shares.",
+                contract: "Spread", currentPrice: "Underlying", netPremium: "Net Premium", outcome: "If Expiring Now",
+                shares: "Shares Retained", assignmentCash: "Assignment Cash", maxLoss: "Max Loss",
+                sharesOutcome: "Shares", lossOutcome: "Cash Loss", expiresOutcome: "Expires", unknownOutcome: "Unknown"
             }
         },
         shortOptionsStrategy: {
@@ -326,10 +365,10 @@ export const en = {
                 dte: "DTE",
                 dteTooltip: "Days Till Expiry. The number of calendar days until the option expires.",
                 premium: "Premium",
-                premiumTooltip: "The net credit received for selling this option, converted to your base currency.",
+                premiumTooltip: "Net strategy credit after allocating the debit paid for a protective long put in the same vertical spread, converted to your base currency.",
                 unrealizedPL: "Unrealized P/L",
                 assignmentCost: "Assignment Cost",
-                assignmentCostTooltip: "The total cash required to buy the shares if assigned (Strike Price * Quantity * Multiplier).",
+                assignmentCostTooltip: "Cash needed if the short put is assigned (strike * contracts * multiplier), converted to your base currency. Cash-settled SPX positions are not included in assignment totals.",
                 moneynessPriceAvailable: "Based on the latest close price of {{baseSymbol}}: {{price}}",
                 moneynessPriceUnavailable: "Latest stock price for {{baseSymbol}} is not available because there is no open stock position for this ticker."
             },
@@ -385,7 +424,8 @@ export const en = {
                     callPremium: "Call Premium",
                     currentValue: "Current Value",
                     unrealizedStockPL: "Unrealized Stock P/L",
-                    currentTotalPL: "Current Total P/L"
+                    currentTotalPL: "Current Total P/L",
+                    annualizedReturn: "Ann. Return"
                 },
                 tooltips: {
                     startDate: "The date you were assigned the shares, marking the start of the cycle.",
@@ -403,13 +443,15 @@ export const en = {
                     callPremium: "Call Premium",
                     stockPL: "Stock P/L",
                     totalPL: "Total P/L",
-                    returnOnCost: "Return on Net Cost"
+                    returnOnCost: "Return on Cost",
+                    annualizedReturn: "Ann. Return"
                 },
                 tooltips: {
                     endDate: "End Date",
                     duration: "Duration (Days)",
-                    totalPL: "The final profit or loss for the entire cycle (Call Premium + Stock P/L).",
-                    returnOnCost: "The total P/L of the cycle as a percentage of the net cost basis of the assigned stock."
+                    totalPL: "The final profit or loss for the entire cycle: stock sale less gross assignment cost, plus put and call premium.",
+                    returnOnCost: "The total P/L of the cycle as a percentage of the gross assignment cost.",
+                    annualizedReturn: "Return on cost annualized by cycle duration."
                 }
             },
             details: {

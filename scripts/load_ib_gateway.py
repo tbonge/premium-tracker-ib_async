@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import sys
@@ -16,11 +17,12 @@ from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
 
 try:
-    from ib_async import IB, ExecutionFilter, Stock
+    from ib_async import IB, ExecutionFilter, Index, Stock
 except ImportError as exc:
     IB = None
     ExecutionFilter = None
     Stock = None
+    Index = None
     IB_ASYNC_IMPORT_ERROR = exc
 else:
     IB_ASYNC_IMPORT_ERROR = None
@@ -36,6 +38,11 @@ def safe_float(value: Any, default: float = 0.0) -> float:
         return parsed
     except (TypeError, ValueError):
         return default
+
+
+def positive_price(value: Any) -> float:
+    price = safe_float(value)
+    return price if price > 0 else 0
 
 
 def flex_error_message(exc: Exception) -> str:
@@ -292,7 +299,7 @@ def asset_category(contract: Any) -> str:
 
 
 def market_price_from_item(item: Any) -> float:
-    price = safe_float(getattr(item, "marketPrice", None))
+    price = positive_price(getattr(item, "marketPrice", None))
     if price:
         return price
     value = safe_float(getattr(item, "marketValue", None))
@@ -356,28 +363,128 @@ def request_underlying_prices(ib: IB, symbols: set[tuple[str, str]]) -> dict[str
     for symbol, currency in sorted(symbols):
         if not symbol:
             continue
-        contracts.append(Stock(symbol, "SMART", currency or "USD"))
+        # SPX is an index, not stock. Qualifying it as STK silently yields no
+        # quote on many Gateway sessions.
+        if symbol.upper() in {"SPX", "SPXW", "XSP"}:
+            contracts.append(Index("SPX" if symbol.upper() == "SPXW" else symbol.upper(), "CBOE", currency or "USD"))
+        else:
+            contracts.append(Stock(symbol, "SMART", currency or "USD"))
 
     if not contracts:
         return prices
 
     try:
         qualified = ib.qualifyContracts(*contracts)
-        tickers = ib.reqTickers(*qualified)
-        for ticker in tickers:
-            contract = getattr(ticker, "contract", None)
-            symbol = getattr(contract, "symbol", "")
-            price = (
-                safe_float(ticker.marketPrice())
-                or safe_float(getattr(ticker, "last", None))
-                or safe_float(getattr(ticker, "close", None))
-            )
-            if symbol and price:
-                prices[symbol] = price
+        def collect(requested: list[Any], market_data_type: int) -> None:
+            if not requested:
+                return
+            ib.reqMarketDataType(market_data_type)
+            tickers = [ib.reqMktData(contract, "", False, False) for contract in requested]
+            ib.sleep(2)
+            for ticker in tickers:
+                contract = getattr(ticker, "contract", None)
+                symbol = getattr(contract, "symbol", "")
+                price = (
+                    positive_price(ticker.marketPrice())
+                    or positive_price(getattr(ticker, "last", None))
+                    or positive_price(getattr(ticker, "close", None))
+                    or positive_price(getattr(ticker, "midpoint", lambda: 0)())
+                )
+                if symbol and price:
+                    prices[symbol] = price
+
+        collect(qualified, 1)
+        missing_contracts = [
+            contract for contract in qualified
+            if getattr(contract, "symbol", "") not in prices
+        ]
+        if missing_contracts:
+            collect(missing_contracts, 3)
+        ib.reqMarketDataType(1)
     except Exception as exc:
         print(f"Unable to load underlying market prices: {exc}", file=sys.stderr)
 
     return prices
+
+
+def request_position_quotes(ib: IB, portfolio_items: list[Any]) -> dict[str, dict[str, float]]:
+    """Fetch current marks, option deltas, and option underlying prices.
+
+    Portfolio updates can contain stale/zero marketPrice values even while the
+    Gateway is connected. Snapshot tickers provide a second, explicit quote
+    path. If live data is unavailable, IB's delayed stream is tried as a
+    fallback (subject to the account's market-data permissions).
+    """
+    contracts = []
+    for item in portfolio_items:
+        source = getattr(item, "contract", None)
+        if source is None:
+            continue
+        # Contracts delivered by portfolio() have an empty exchange. IB accepts
+        # them for account updates but not for reqMktData, so request a SMART
+        # routing copy while retaining the conId and all option identifiers.
+        contract = copy.copy(source)
+        if not getattr(contract, "exchange", ""):
+            contract.exchange = "SMART"
+        contracts.append(contract)
+    quotes: dict[str, dict[str, float]] = {}
+
+    def load(market_data_type: int, only_missing: bool = False) -> None:
+        try:
+            ib.reqMarketDataType(market_data_type)
+            requested = [
+                contract for contract in contracts
+                if not only_missing
+                or contract_key(contract) not in quotes
+                or (
+                    str(getattr(contract, "secType", "")).upper() == "OPT"
+                    and not quotes[contract_key(contract)].get("underlyingPrice")
+                )
+            ]
+            for offset in range(0, len(requested), 50):
+                batch = requested[offset:offset + 50]
+                tickers = [ib.reqMktData(contract, "", False, False) for contract in batch]
+                ib.sleep(2)
+                for ticker in tickers:
+                    contract = getattr(ticker, "contract", None)
+                    if contract is None:
+                        continue
+                    key = contract_key(contract)
+                    greek_sets = [
+                        getattr(ticker, name, None)
+                        for name in ("modelGreeks", "lastGreeks", "bidGreeks", "askGreeks")
+                    ]
+                    price = (
+                        positive_price(ticker.marketPrice())
+                        or positive_price(getattr(ticker, "last", None))
+                        or positive_price(getattr(ticker, "close", None))
+                        or positive_price(getattr(ticker, "midpoint", lambda: 0)())
+                    )
+                    delta = next(
+                        (safe_float(getattr(greeks, "delta", None)) for greeks in greek_sets
+                         if greeks and safe_float(getattr(greeks, "delta", None))),
+                        0,
+                    )
+                    under_price = next(
+                        (positive_price(getattr(greeks, "undPrice", None)) for greeks in greek_sets
+                         if greeks and positive_price(getattr(greeks, "undPrice", None))),
+                        0,
+                    )
+                    if price or delta or under_price:
+                        quote = quotes.setdefault(key, {})
+                        if price:
+                            quote["price"] = price
+                        if delta:
+                            quote["delta"] = delta
+                        if under_price:
+                            quote["underlyingPrice"] = under_price
+        except Exception as exc:
+            print(f"Unable to load position market data type {market_data_type}: {exc}", file=sys.stderr)
+
+    load(1)
+    load(3, only_missing=True)
+    ib.reqMarketDataType(1)
+    return quotes
 
 
 def execution_month(value: Any) -> str | None:
@@ -580,6 +687,7 @@ def build_dashboard(ib: IB) -> dict[str, Any]:
     }
 
     portfolio_items = ib.portfolio()
+    position_quotes = request_position_quotes(ib, portfolio_items)
     option_premiums, monthly_premium_summary, daily_options_summary, realized_events, option_sales = read_option_premiums(ib, account)
     data["sessionRealizedEvents"] = realized_events
     data["sessionOptionSales"] = option_sales
@@ -632,6 +740,9 @@ def build_dashboard(ib: IB) -> dict[str, Any]:
         cost_basis = market_value - unrealized if market_value or unrealized else 0
         close_price = market_price_from_item(item)
         multiplier = safe_float(getattr(contract, "multiplier", None), 1) or 1
+        quote = position_quotes.get(contract_key(contract), {})
+        if quote.get("price"):
+            close_price = safe_float(quote["price"])
 
         if is_option and base_symbol:
             underlying_symbols.add((base_symbol, currency))
@@ -644,7 +755,8 @@ def build_dashboard(ib: IB) -> dict[str, Any]:
             "multiplier": multiplier,
             "costBasis": cost_basis,
             "closePrice": close_price,
-            "underlyingPrice": None,
+            "underlyingPrice": quote.get("underlyingPrice"),
+            "delta": quote.get("delta"),
             "value": market_value,
             "unrealizedPL": unrealized,
             "currency": currency,
@@ -1357,6 +1469,7 @@ def apply_flex_open_positions(data: dict[str, Any], report: Any, option_activity
                 "costBasis": safe_float(attr(row, "costBasis", "costBasisMoney", "cost", default=0)) * exchange_rate,
                 "closePrice": safe_float(attr(row, "closePrice", "markPrice", "price", default=0)),
                 "underlyingPrice": None,
+                "delta": None,
                 "value": value,
                 "unrealizedPL": unrealized_pl,
                 "currency": currency,

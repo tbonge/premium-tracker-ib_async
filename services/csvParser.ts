@@ -1,6 +1,8 @@
 import { ParsedData, Position, ClosedPosition, ArocTrade, WheelCycle, WheelCycleAnalysis, WheelCycleTrade, PendingWheelCycle, MonthlySummary, WeeklySummary, TickerPL, NAVChange, ShortPutIncomeSummary, DailyOptionsSummary } from '../types';
+import { DAYS_PER_YEAR, DEFAULT_OPTION_MULTIPLIER } from '../constants';
 
-const safeParseFloat = (val: string): number => {
+const safeParseFloat = (val: unknown): number => {
+    if (typeof val === 'number') return Number.isFinite(val) ? val : 0;
     if (!val || typeof val !== 'string') return 0;
     return parseFloat(val.replace(/,/g, '')) || 0;
 };
@@ -9,27 +11,162 @@ const parseOptionSymbol = (symbol: string): { isOption: boolean; optionType?: 'P
     if (!symbol) {
         return { isOption: false, baseSymbol: '' };
     }
-    const parts = symbol.trim().split(/\s+/);
-    const baseSymbol = parts[0];
-    if (parts.length < 4) {
+    const normalized = symbol.trim().replace(/\s+/g, ' ');
+    const parts = normalized.split(' ');
+    const fallbackBaseSymbol = parts[0] || normalized;
+
+    const parseExpiry = (value?: string): string | undefined => {
+        if (!value) return undefined;
+        const dashed = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+        if (dashed) {
+            return `${dashed[1]}-${dashed[2].padStart(2, '0')}-${dashed[3].padStart(2, '0')}`;
+        }
+        const compact = value.match(/^(\d{2})(\d{2})(\d{2})$/) || value.match(/^(\d{4})(\d{2})(\d{2})$/);
+        if (!compact) return undefined;
+        const year = compact[1].length === 2 ? Number(compact[1]) + 2000 : Number(compact[1]);
+        const month = Number(compact[2]);
+        const day = Number(compact[3]);
+        if (month < 1 || month > 12 || day < 1 || day > 31) return undefined;
+        return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    };
+
+    const parseStrike = (value?: string): number | undefined => {
+        if (!value) return undefined;
+        if (/^\d{8}$/.test(value)) {
+            return Number(value) / 1000;
+        }
+        const parsed = safeParseFloat(value);
+        return parsed > 0 ? parsed : undefined;
+    };
+
+    const makeResult = (baseParts: string[], expiryToken?: string, typeToken?: string, strikeToken?: string) => {
+        const optionType = typeToken?.toUpperCase();
+        const expiry = parseExpiry(expiryToken);
+        const strikePrice = parseStrike(strikeToken);
+        const baseSymbol = baseParts.join(' ').trim() || fallbackBaseSymbol;
+        if ((optionType === 'P' || optionType === 'C') && expiry && strikePrice) {
+            return { isOption: true, optionType, strikePrice, expiry, baseSymbol } as const;
+        }
         return { isOption: false, baseSymbol };
+    };
+
+    const compactWhole = normalized.match(/^(.+?)[\s-]*(\d{6})([CP])(\d{8}|\d+(?:\.\d+)?)$/i);
+    if (compactWhole) {
+        return makeResult([compactWhole[1].trim()], compactWhole[2], compactWhole[3], compactWhole[4]);
     }
 
-    const type = parts[parts.length - 1];
-    const strike = parts[parts.length - 2];
-    
-    if ((type === 'P' || type === 'C') && !isNaN(parseFloat(strike))) {
-        const expiry = parts[parts.length - 3];
-        return {
-            isOption: true,
-            optionType: type,
-            strikePrice: parseFloat(strike),
-            expiry,
-            baseSymbol
-        };
+    const compactTail = parts[parts.length - 1]?.match(/^(\d{6})([CP])(\d{8}|\d+(?:\.\d+)?)$/i);
+    if (compactTail && parts.length >= 2) {
+        return makeResult(parts.slice(0, -1), compactTail[1], compactTail[2], compactTail[3]);
+    }
+
+    if (parts.length >= 4) {
+        const last = parts[parts.length - 1]?.toUpperCase();
+        if (last === 'P' || last === 'C') {
+            return makeResult(parts.slice(0, -3), parts[parts.length - 3], last, parts[parts.length - 2]);
+        }
+
+        const typeBeforeStrike = parts[parts.length - 2]?.toUpperCase();
+        if (typeBeforeStrike === 'P' || typeBeforeStrike === 'C') {
+            return makeResult(parts.slice(0, -3), parts[parts.length - 3], typeBeforeStrike, parts[parts.length - 1]);
+        }
     }
     
-    return { isOption: false, baseSymbol };
+    return { isOption: false, baseSymbol: fallbackBaseSymbol };
+};
+
+const parseStatementDate = (value: unknown): Date | null => {
+    if (!value) return null;
+    if (value instanceof Date) return isNaN(value.getTime()) ? null : value;
+    const raw = String(value).trim();
+    if (!raw) return null;
+
+    const ymd = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[,\sT]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+    if (ymd) {
+        return new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]), Number(ymd[4] || 12), Number(ymd[5] || 0), Number(ymd[6] || 0));
+    }
+
+    const mdy = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+    if (mdy) {
+        return new Date(Number(mdy[3]), Number(mdy[1]) - 1, Number(mdy[2]), Number(mdy[4] || 12), Number(mdy[5] || 0), Number(mdy[6] || 0));
+    }
+
+    const parsed = new Date(raw.replace(',', ''));
+    return isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const rateFor = (exchangeRates: { [key: string]: number }, currency?: string): number => {
+    if (!currency) return 1;
+    const rate = exchangeRates[currency.trim().toUpperCase()];
+    return rate && rate > 0 ? rate : 1;
+};
+
+const setExchangeRate = (
+    exchangeRates: { [currency: string]: number },
+    currency: string | undefined,
+    rate: number,
+    baseCurrency: string,
+    warnings: string[]
+) => {
+    const code = currency?.trim().toUpperCase();
+    if (!code || code === baseCurrency) return;
+    if (!Number.isFinite(rate) || rate <= 0) {
+        warnings.push(`Ignored invalid FX rate for ${code}.`);
+        return;
+    }
+    if (rate > 1000) {
+        warnings.push(`Suspicious FX rate for ${code}: ${rate}. Check IB rate direction.`);
+    }
+    exchangeRates[code] = rate;
+};
+
+const parseForexRateRow = (row: Record<string, string>, baseCurrency: string): { currency: string; rate: number } | null => {
+    const symbol = (row['Symbol'] || row['Currency'] || '').trim().toUpperCase();
+    const price = safeParseFloat(row['Current Price'] || row['Close Price'] || row['Rate']);
+    if (!symbol || price <= 0) return null;
+
+    const pairParts = symbol.includes('.') || symbol.includes('/')
+        ? symbol.split(/[./]/)
+        : symbol.length === 6 ? [symbol.slice(0, 3), symbol.slice(3)] : null;
+
+    if (pairParts?.length === 2) {
+        const [base, quote] = pairParts;
+        if (quote === baseCurrency) return { currency: base, rate: price };
+        if (base === baseCurrency) return { currency: quote, rate: 1 / price };
+        return null;
+    }
+
+    if (/^[A-Z]{3}$/.test(symbol)) {
+        return { currency: symbol, rate: price };
+    }
+
+    return null;
+};
+
+const inferCashReportRate = (row: Record<string, string>, baseCurrency: string): { currency: string; rate: number } | null => {
+    const currency = row['Currency']?.trim().toUpperCase();
+    if (!currency || currency === baseCurrency) return null;
+    const nativeTotal = safeParseFloat(row['Total'] || row['Ending Cash'] || row['Cash']);
+    if (!nativeTotal) return null;
+
+    const baseKey = Object.keys(row).find(key => {
+        const lower = key.toLowerCase();
+        return lower.includes(baseCurrency.toLowerCase()) && (lower.includes('total') || lower.includes('base'));
+    });
+    if (!baseKey) return null;
+
+    const baseTotal = safeParseFloat(row[baseKey]);
+    if (!baseTotal) return null;
+    return { currency, rate: Math.abs(baseTotal / nativeTotal) };
+};
+
+const collectCurrencies = (sections: { [key: string]: Record<string, string>[] }, baseCurrency: string): Set<string> => {
+    const currencies = new Set<string>([baseCurrency]);
+    Object.values(sections).flat().forEach(row => {
+        const currency = row['Currency']?.trim().toUpperCase();
+        if (currency) currencies.add(currency);
+    });
+    return currencies;
 };
 
 const parseCsvLine = (line: string): string[] => {
@@ -81,7 +218,7 @@ function analyzeShortOptionIncome(trades: any[], exchangeRates: { [key: string]:
 
     for (const trade of closedShortPuts) {
         const currency = trade['Currency'];
-        const rate = exchangeRates[currency] || 1;
+        const rate = rateFor(exchangeRates, currency);
         
         // For expired puts, realized P/L is the premium.
         // For bought-to-close, it is the net profit.
@@ -128,14 +265,14 @@ function analyzeMonthlySummary(
     const realizedPlTrades = (trades || []).filter(r => r['DataDiscriminator'] === 'Order');
 
     for (const trade of realizedPlTrades) {
-        const date = new Date(trade['Date/Time'].replace(',', ''));
-        if (isNaN(date.getTime())) continue;
+        const date = parseStatementDate(trade['Date/Time']);
+        if (!date) continue;
 
         const monthKey = getMonthKey(date);
         ensureMonthKey(monthKey);
         
         const currency = trade['Currency'];
-        const rate = exchangeRates[currency] || 1;
+        const rate = rateFor(exchangeRates, currency);
         const category = trade['Asset Category'];
 
         if (category === 'Equity and Index Options' || category === 'Stocks') {
@@ -162,8 +299,8 @@ function analyzeMonthlySummary(
     if (forexPlDetails) {
         const forexRows = forexPlDetails.filter(r => r['Realized P/L'] && safeParseFloat(r['Realized P/L']) !== 0);
         for (const row of forexRows) {
-            const date = new Date(row['Date']); // Date format is simpler here
-            if (isNaN(date.getTime())) continue;
+            const date = parseStatementDate(row['Date']);
+            if (!date) continue;
 
             const monthKey = getMonthKey(date);
             ensureMonthKey(monthKey);
@@ -182,14 +319,14 @@ function analyzeMonthlySummary(
     );
 
     for (const trade of optionOpeningTrades) {
-        const date = new Date(trade['Date/Time'].replace(',', ''));
-        if (isNaN(date.getTime())) continue;
+        const date = parseStatementDate(trade['Date/Time']);
+        if (!date) continue;
         
         const monthKey = getMonthKey(date);
         ensureMonthKey(monthKey);
         
         const currency = trade['Currency'];
-        const rate = exchangeRates[currency] || 1;
+        const rate = rateFor(exchangeRates, currency);
         const proceeds = safeParseFloat(trade['Proceeds']) * rate;
         const commFee = safeParseFloat(trade['Comm/Fee']) * rate; // comm/fee is usually negative
 
@@ -200,14 +337,14 @@ function analyzeMonthlySummary(
     if (syepInterest) {
         const syepRows = syepInterest.filter(r => r['Value Date'] && r['Interest Paid to Customer']);
         for (const row of syepRows) {
-            const date = new Date(row['Value Date']);
-            if (isNaN(date.getTime())) continue;
+            const date = parseStatementDate(row['Value Date']);
+            if (!date) continue;
             
             const monthKey = getMonthKey(date);
             ensureMonthKey(monthKey);
             
             const currency = row['Currency'];
-            const rate = exchangeRates[currency] || 1;
+            const rate = rateFor(exchangeRates, currency);
             const interest = safeParseFloat(row['Interest Paid to Customer']) * rate;
 
             summaryByMonth[monthKey].syepIncome += interest;
@@ -218,14 +355,14 @@ function analyzeMonthlySummary(
     if (brokerInterest) {
         const interestRows = brokerInterest.filter(r => r['Date'] && r['Amount']);
         for (const row of interestRows) {
-            const date = new Date(row['Date']);
-            if (isNaN(date.getTime())) continue;
+            const date = parseStatementDate(row['Date']);
+            if (!date) continue;
 
             const monthKey = getMonthKey(date);
             ensureMonthKey(monthKey);
 
             const currency = row['Currency'];
-            const rate = exchangeRates[currency] || 1;
+            const rate = rateFor(exchangeRates, currency);
             const amount = safeParseFloat(row['Amount']) * rate;
 
             // Interest can be debit (negative) or credit (positive).
@@ -242,14 +379,14 @@ function analyzeMonthlySummary(
     // 5. Commissions from all trades
     const allOrderTrades = (trades || []).filter(r => r['DataDiscriminator'] === 'Order');
     for (const trade of allOrderTrades) {
-        const date = new Date(trade['Date/Time'].replace(',', ''));
-        if (isNaN(date.getTime())) continue;
+        const date = parseStatementDate(trade['Date/Time']);
+        if (!date) continue;
 
         const monthKey = getMonthKey(date);
         ensureMonthKey(monthKey);
 
         const currency = trade['Currency'];
-        const rate = exchangeRates[currency] || 1;
+        const rate = rateFor(exchangeRates, currency);
         
         const commissionKey = Object.keys(trade).find(k => k.toLowerCase().startsWith('comm'));
         if(commissionKey) {
@@ -262,14 +399,14 @@ function analyzeMonthlySummary(
     if (otherFees) {
         const feeRows = otherFees.filter(r => r['Date'] && r['Amount']);
         for (const row of feeRows) {
-            const date = new Date(row['Date']);
-            if (isNaN(date.getTime())) continue;
+            const date = parseStatementDate(row['Date']);
+            if (!date) continue;
 
             const monthKey = getMonthKey(date);
             ensureMonthKey(monthKey);
             
             const currency = row['Currency'];
-            const rate = exchangeRates[currency] || 1;
+            const rate = rateFor(exchangeRates, currency);
             const amount = safeParseFloat(row['Amount']); // Charges are negative; refunds are positive.
             summaryByMonth[monthKey].fees -= amount * rate;
         }
@@ -282,7 +419,7 @@ function analyzeMonthlySummary(
         const taxRows = cashReport.filter(r => r['Currency Summary'] === 'Sales Tax');
         for (const row of taxRows) {
             const currency = row['Currency'];
-            const rate = exchangeRates[currency] || 1;
+            const rate = rateFor(exchangeRates, currency);
             const amount = safeParseFloat(row['Total']); // This is negative
             totalSalesTax += Math.abs(amount * rate);
         }
@@ -320,6 +457,12 @@ function formatDateKey(date: Date): string {
     return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
 }
 
+function parseDateKey(value: string): Date | null {
+    const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12);
+}
+
 function analyzeDailyOptionsSummary(
     trades: any[],
     exchangeRates: { [key: string]: number }
@@ -328,15 +471,15 @@ function analyzeDailyOptionsSummary(
         .filter(r => r['DataDiscriminator'] === 'Order' && r['Asset Category'] === 'Equity and Index Options')
         .map(trade => ({
             ...trade,
-            parsedDate: new Date(trade['Date/Time'].replace(',', '')),
+            parsedDate: parseStatementDate(trade['Date/Time']),
         }))
-        .filter(trade => !isNaN(trade.parsedDate.getTime()));
+        .filter(trade => trade.parsedDate !== null);
 
     if (optionTrades.length === 0) {
         return [];
     }
 
-    const endDate = new Date(Math.max(...optionTrades.map(trade => trade.parsedDate.getTime())));
+    const endDate = new Date(Math.max(...optionTrades.map(trade => trade.parsedDate!.getTime())));
     endDate.setHours(0, 0, 0, 0);
     const startDate = new Date(endDate);
     startDate.setDate(startDate.getDate() - 29);
@@ -350,7 +493,7 @@ function analyzeDailyOptionsSummary(
     }
 
     for (const trade of optionTrades) {
-        const tradeDate = new Date(trade.parsedDate);
+        const tradeDate = new Date(trade.parsedDate!);
         tradeDate.setHours(0, 0, 0, 0);
         if (tradeDate < startDate || tradeDate > endDate) {
             continue;
@@ -365,7 +508,7 @@ function analyzeDailyOptionsSummary(
         const summary = summaryByDate[key];
         const code = trade.Code || '';
         const quantity = safeParseFloat(trade.Quantity);
-        const rate = exchangeRates[trade.Currency] || 1;
+        const rate = rateFor(exchangeRates, trade.Currency);
 
         if (quantity < 0 && code.includes('O')) {
             summary.premiumCollected += (safeParseFloat(trade.Proceeds) + safeParseFloat(trade['Comm/Fee'])) * rate;
@@ -379,8 +522,8 @@ function analyzeDailyOptionsSummary(
 
 function weeklyDateKey(value: string): string | null {
     if (!value) return null;
-    const date = new Date(value.replace(',', ''));
-    if (isNaN(date.getTime())) return null;
+    const date = parseStatementDate(value);
+    if (!date) return null;
     date.setHours(0, 0, 0, 0);
     date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
     return formatDateKey(date);
@@ -406,20 +549,20 @@ function analyzeWeeklySummary(
         const week = weeklyDateKey(row['Date/Time']);
         if (!week) return;
         const bucket = ensure(week);
-        const rate = exchangeRates[row.Currency] || 1;
+        const rate = rateFor(exchangeRates, row.Currency);
         bucket.commissions += Math.abs(safeParseFloat(row['Comm/Fee']) * rate);
         if (row['Asset Category'] === 'Stocks') bucket.stocksPL = (bucket.stocksPL || 0) + safeParseFloat(row['Realized P/L']) * rate;
     });
     interestRows.forEach(row => {
         const week = weeklyDateKey(row.Date || row['Value Date']);
         if (!week) return;
-        const amount = safeParseFloat(row.Amount || row.Interest) * (exchangeRates[row.Currency] || 1);
+        const amount = safeParseFloat(row.Amount || row.Interest) * rateFor(exchangeRates, row.Currency);
         ensure(week).interest += amount;
         if (amount < 0) ensure(week).interestPaid += Math.abs(amount);
     });
     feeRows.forEach(row => {
         const week = weeklyDateKey(row.Date);
-        if (week) ensure(week).fees -= safeParseFloat(row.Amount) * (exchangeRates[row.Currency] || 1);
+        if (week) ensure(week).fees -= safeParseFloat(row.Amount) * rateFor(exchangeRates, row.Currency);
     });
     return [...weeks.values()].sort((a, b) => a.week.localeCompare(b.week));
 }
@@ -427,24 +570,26 @@ function analyzeWeeklySummary(
 
 function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: number }, baseCurrency: string, instrumentMultipliers: Map<string, number>, openPositions: Position[]): WheelCycleAnalysis {
     const completedCycles: WheelCycle[] = [];
-    const stockLots = new Map<string, { quantity: number; costBasis: number; acquisitionDate: Date; coveredShares: number }[]>();
+    const stockLots = new Map<string, { quantity: number; costBasis: number; grossCostBasis: number; acquisitionDate: Date; coveredShares: number; lotIndex: number }[]>();
     const inProgressCycles = new Map<string, Partial<WheelCycle> & { lotIndex: number }>();
     const openShortPuts = new Map<string, any[]>();
+    const pendingPutRollLogs = new Map<string, WheelCycleTrade[]>();
 
     const allTrades = trades
         .filter(r => r['DataDiscriminator'] === 'Order' && ['Stocks', 'Equity and Index Options'].includes(r['Asset Category']))
         .map(trade => ({
             ...trade,
-            parsedDate: new Date(trade['Date/Time'].replace(',', '')),
+            parsedDate: parseStatementDate(trade['Date/Time']),
         }))
-        .sort((a, b) => a.parsedDate.getTime() - b.parsedDate.getTime());
+        .filter(trade => trade.parsedDate !== null)
+        .sort((a, b) => a.parsedDate!.getTime() - b.parsedDate!.getTime());
 
     for (const trade of allTrades) {
         const { baseSymbol, isOption, optionType, strikePrice } = parseOptionSymbol(trade.Symbol);
         const quantity = safeParseFloat(trade.Quantity);
         const code = trade.Code || '';
         const currency = trade['Currency'];
-        const rate = exchangeRates[currency] || 1;
+        const rate = rateFor(exchangeRates, currency);
         const commFee = safeParseFloat(trade['Comm/Fee']) * rate;
         const proceeds = safeParseFloat(trade.Proceeds) * rate;
 
@@ -457,6 +602,15 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
             for (let i = 0; i < Math.abs(quantity); i++) {
                 openShortPuts.get(trade.Symbol)?.push(trade);
             }
+        }
+        else if (isOption && optionType === 'P' && quantity > 0 && code.includes('C')) {
+            const logs = pendingPutRollLogs.get(baseSymbol) || [];
+            logs.push({
+                date: trade.parsedDate.toISOString().split('T')[0],
+                description: `Put Roll/Close (${trade.Symbol})`,
+                amount: safeParseFloat(trade['Realized P/L']) * rate
+            });
+            pendingPutRollLogs.set(baseSymbol, logs);
         }
         // Put Assignment -> Stock Acquisition
         else if (isOption && optionType === 'P' && quantity > 0 && code.includes('A')) {
@@ -473,13 +627,13 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                     const openProceeds = safeParseFloat(openTrade.Proceeds);
                     const openCommFee = safeParseFloat(openTrade['Comm/Fee']);
                     const openCurrency = openTrade['Currency'];
-                    const openRate = exchangeRates[openCurrency] || 1;
+                    const openRate = rateFor(exchangeRates, openCurrency);
                     const contractsInOpeningTrade = Math.max(1, Math.abs(safeParseFloat(openTrade.Quantity)));
                     // Each queue entry represents one contract, while proceeds and fees are totals for the trade.
                     initialPutPremium += ((openProceeds + openCommFee) / contractsInOpeningTrade) * openRate;
                 }
 
-                const multiplier = instrumentMultipliers.get(trade.Symbol.trim()) || 100;
+                const multiplier = instrumentMultipliers.get(trade.Symbol.trim()) || DEFAULT_OPTION_MULTIPLIER;
                 const sharesAcquired = numContractsAssigned * multiplier;
 
                 const grossStockCostBasis = (strikePrice! * sharesAcquired) * rate;
@@ -488,14 +642,16 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                 if (!stockLots.has(baseSymbol)) {
                     stockLots.set(baseSymbol, []);
                 }
+                const lotIndex = stockLots.get(baseSymbol)!.length;
                 const newLot = {
                     quantity: sharesAcquired,
                     costBasis: effectiveCostBasis,
+                    grossCostBasis: grossStockCostBasis,
                     acquisitionDate: trade.parsedDate,
-                    coveredShares: 0
+                    coveredShares: 0,
+                    lotIndex
                 };
                 stockLots.get(baseSymbol)?.push(newLot);
-                const lotIndex = stockLots.get(baseSymbol)!.length - 1;
 
                 inProgressCycles.set(`${baseSymbol}-${lotIndex}`, {
                     symbol: baseSymbol,
@@ -509,7 +665,9 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                     assignmentShares: sharesAcquired,
                     assignmentCost: grossStockCostBasis, // Store gross cost for transparency
                     netAssignmentCost: effectiveCostBasis,
-                    tradeLog: [{
+                    tradeLog: [
+                    ...(pendingPutRollLogs.get(baseSymbol) || []),
+                    {
                         date: trade.parsedDate.toISOString().split('T')[0],
                         description: `Assigned ${sharesAcquired} shares @ ${strikePrice!.toFixed(2)}`,
                         amount: -grossStockCostBasis
@@ -519,32 +677,34 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                         amount: initialPutPremium
                     }]
                 });
+                pendingPutRollLogs.delete(baseSymbol);
 
             } else {
                 console.warn(`Could not find opening trade for assignment of ${trade.Symbol}. Put premium will be incorrect.`);
                 const putPremiumRealized = 0; // Fallback to 0 if no open trade is found
-                const multiplier = instrumentMultipliers.get(trade.Symbol.trim()) || 100;
+                const multiplier = instrumentMultipliers.get(trade.Symbol.trim()) || DEFAULT_OPTION_MULTIPLIER;
                 const sharesAcquired = quantity * multiplier;
                 const grossStockCostBasis = (strikePrice! * sharesAcquired) * rate;
                 const effectiveCostBasis = grossStockCostBasis - putPremiumRealized;
                 if (!stockLots.has(baseSymbol)) stockLots.set(baseSymbol, []);
-                const newLot = { quantity: sharesAcquired, costBasis: effectiveCostBasis, acquisitionDate: trade.parsedDate, coveredShares: 0 };
+                const lotIndex = stockLots.get(baseSymbol)!.length;
+                const newLot = { quantity: sharesAcquired, costBasis: effectiveCostBasis, grossCostBasis: grossStockCostBasis, acquisitionDate: trade.parsedDate, coveredShares: 0, lotIndex };
                 stockLots.get(baseSymbol)?.push(newLot);
-                const lotIndex = stockLots.get(baseSymbol)!.length - 1;
                 inProgressCycles.set(`${baseSymbol}-${lotIndex}`, {
                     symbol: baseSymbol, currency: currency, initialPutPremium: putPremiumRealized, totalCallPremium: 0, stockPL: 0,
                     startDate: trade.parsedDate.toISOString().split('T')[0], lotIndex: lotIndex, assignmentPrice: strikePrice!, assignmentShares: sharesAcquired,
                     assignmentCost: grossStockCostBasis,
                     netAssignmentCost: effectiveCostBasis,
-                    tradeLog: [{ date: trade.parsedDate.toISOString().split('T')[0], description: `Assigned ${sharesAcquired} shares @ ${strikePrice!.toFixed(2)}`, amount: -grossStockCostBasis }]
+                    tradeLog: [...(pendingPutRollLogs.get(baseSymbol) || []), { date: trade.parsedDate.toISOString().split('T')[0], description: `Assigned ${sharesAcquired} shares @ ${strikePrice!.toFixed(2)}`, amount: -grossStockCostBasis }]
                 });
+                pendingPutRollLogs.delete(baseSymbol);
             }
         }
 
         // Covered Call Premium
         else if (isOption && optionType === 'C' && quantity < 0 && code.includes('O')) {
             const contractsSold = Math.abs(quantity);
-            const multiplier = instrumentMultipliers.get(trade.Symbol.trim()) || 100;
+            const multiplier = instrumentMultipliers.get(trade.Symbol.trim()) || DEFAULT_OPTION_MULTIPLIER;
             let sharesToCover = contractsSold * multiplier;
             const totalPremiumForTrade = proceeds + commFee;
 
@@ -560,7 +720,7 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                     if (availableShares > 0) {
                         const sharesInThisLotToCover = Math.min(sharesToCover, availableShares);
                         
-                        const cycleKey = `${baseSymbol}-${i}`;
+                        const cycleKey = `${baseSymbol}-${lot.lotIndex}`;
                         const cycle = inProgressCycles.get(cycleKey);
 
                         if (cycle && cycle.tradeLog) {
@@ -585,8 +745,9 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
         // Closing a short call (expiration or buy-to-close) -> makes a lot available again
         else if (isOption && optionType === 'C' && quantity > 0 && (code.includes('C') || code.includes('Ep'))) {
             const contractsClosed = quantity;
-            const multiplier = instrumentMultipliers.get(trade.Symbol.trim()) || 100;
+            const multiplier = instrumentMultipliers.get(trade.Symbol.trim()) || DEFAULT_OPTION_MULTIPLIER;
             let sharesToUncover = contractsClosed * multiplier;
+            const totalCloseCashFlow = proceeds + commFee;
             
             const lotsForSymbol = stockLots.get(baseSymbol);
 
@@ -598,6 +759,16 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                     const lot = lotsForSymbol[i];
                     if (lot.coveredShares > 0) {
                         const sharesInThisLotToUncover = Math.min(sharesToUncover, lot.coveredShares);
+                        const cycle = inProgressCycles.get(`${baseSymbol}-${lot.lotIndex}`);
+                        if (cycle && cycle.tradeLog) {
+                            const amountForThisLot = totalCloseCashFlow * (sharesInThisLotToUncover / (contractsClosed * multiplier));
+                            cycle.totalCallPremium = (cycle.totalCallPremium || 0) + amountForThisLot;
+                            cycle.tradeLog.push({
+                                date: trade.parsedDate.toISOString().split('T')[0],
+                                description: `${code.includes('Ep') ? 'Call Expired/Closed' : 'Call Roll/Close'} (${trade.Symbol})`,
+                                amount: amountForThisLot
+                            });
+                        }
                         lot.coveredShares -= sharesInThisLotToUncover;
                         sharesToUncover -= sharesInThisLotToUncover;
                     }
@@ -610,12 +781,12 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
             const lots = stockLots.get(baseSymbol);
             if (lots && lots.length > 0) {
                 const soldLot = lots.shift()!; // FIFO, has effectiveCostBasis
-                const cycleKey = `${baseSymbol}-${lots.length}`;
+                const cycleKey = `${baseSymbol}-${soldLot.lotIndex}`;
                 const cycle = inProgressCycles.get(cycleKey);
 
                 if (cycle) {
                     const saleProceedsValue = proceeds + commFee;
-                    const stockPLValue = saleProceedsValue - soldLot.costBasis;
+                    const stockPLValue = saleProceedsValue - soldLot.grossCostBasis;
                     cycle.stockPL = stockPLValue;
                     cycle.salePrice = safeParseFloat(trade['T. Price']);
                     cycle.saleProceeds = saleProceedsValue;
@@ -628,11 +799,13 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                         });
                     }
 
-                    const totalPL = stockPLValue + (cycle.totalCallPremium || 0);
+                    const totalPL = stockPLValue + (cycle.initialPutPremium || 0) + (cycle.totalCallPremium || 0);
 
                     const startDate = new Date(cycle.startDate!);
                     const endDate = trade.parsedDate;
                     const durationDays = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+                    const effectiveDurationDays = durationDays > 0 ? durationDays : 1;
+                    const returnOnCost = cycle.assignmentCost! > 0 ? totalPL / cycle.assignmentCost! : 0;
 
                     completedCycles.push({
                         symbol: baseSymbol,
@@ -641,14 +814,15 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                         totalCallPremium: cycle.totalCallPremium || 0,
                         stockPL: stockPLValue,
                         totalPL: totalPL,
-                        durationDays: durationDays > 0 ? durationDays : 1,
-                        returnOnCost: soldLot.costBasis > 0 ? totalPL / soldLot.costBasis : 0,
+                        durationDays: effectiveDurationDays,
+                        returnOnCost,
+                        annualizedReturn: returnOnCost * (DAYS_PER_YEAR / effectiveDurationDays),
                         startDate: cycle.startDate!,
                         endDate: endDate.toISOString().split('T')[0],
                         assignmentPrice: cycle.assignmentPrice!,
                         assignmentShares: cycle.assignmentShares!,
                         assignmentCost: cycle.assignmentCost!, // Gross cost
-                        netAssignmentCost: soldLot.costBasis, // Net cost
+                        netAssignmentCost: cycle.netAssignmentCost!, // Net cost
                         salePrice: cycle.salePrice!,
                         saleProceeds: cycle.saleProceeds!,
                         tradeLog: cycle.tradeLog || []
@@ -673,6 +847,10 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
             
             const unrealizedStockPL = currentStockValue - cycleInProgress.netAssignmentCost!;
             const currentTotalPL = unrealizedStockPL + (cycleInProgress.totalCallPremium || 0);
+            const startDate = new Date(`${cycleInProgress.startDate!}T00:00:00`);
+            const durationDays = Number.isFinite(startDate.getTime())
+                ? Math.max(1, Math.round((Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24)))
+                : 1;
 
             pendingCycles.push({
                 symbol: cycleInProgress.symbol!,
@@ -684,6 +862,7 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                 assignmentCost: cycleInProgress.assignmentCost!,
                 netAssignmentCost: cycleInProgress.netAssignmentCost!,
                 totalCallPremium: cycleInProgress.totalCallPremium || 0,
+                annualizedReturn: cycleInProgress.assignmentCost! > 0 ? (currentTotalPL / cycleInProgress.assignmentCost!) * (DAYS_PER_YEAR / durationDays) : 0,
                 currentStockValue,
                 unrealizedStockPL,
                 currentTotalPL,
@@ -805,28 +984,44 @@ export function parseIbkrCsv(csvString: string): ParsedData {
         
         const baseCurrency = infoMap.get('Base Currency');
         if (baseCurrency) {
-            data.accountInfo.baseCurrency = baseCurrency;
-            data.nav.baseCurrency = baseCurrency;
-            data.exchangeRates[baseCurrency] = 1;
+            const normalizedBaseCurrency = baseCurrency.trim().toUpperCase();
+            data.accountInfo.baseCurrency = normalizedBaseCurrency;
+            data.nav.baseCurrency = normalizedBaseCurrency;
+            data.exchangeRates[normalizedBaseCurrency] = 1;
         }
         data.accountInfo.account = infoMap.get('Account') || '';
         data.accountInfo.name = infoMap.get('Name') || '';
     }
 
     // Process Exchange Rates from Mark-to-Market section
+    const fxWarnings = data.historyStatus?.warnings || [];
     if (sections['Mark-to-Market Performance Summary']) {
         const forexRows = sections['Mark-to-Market Performance Summary'].filter(r => r['Asset Category'] === 'Forex');
         forexRows.forEach(row => {
-            const currency = row['Symbol'];
-            const rateStr = row['Current Price'];
-            if(currency && rateStr && currency !== data.accountInfo.baseCurrency) {
-                const rate = safeParseFloat(rateStr);
-                if (rate > 0) {
-                    data.exchangeRates[currency] = rate;
-                }
+            const parsedRate = parseForexRateRow(row, data.accountInfo.baseCurrency);
+            if (parsedRate) {
+                setExchangeRate(data.exchangeRates, parsedRate.currency, parsedRate.rate, data.accountInfo.baseCurrency, fxWarnings);
             }
         });
     }
+
+    if (sections['Cash Report']) {
+        for (const row of sections['Cash Report']) {
+            const parsedRate = inferCashReportRate(row, data.accountInfo.baseCurrency);
+            if (parsedRate && !data.exchangeRates[parsedRate.currency]) {
+                setExchangeRate(data.exchangeRates, parsedRate.currency, parsedRate.rate, data.accountInfo.baseCurrency, fxWarnings);
+            }
+        }
+    }
+
+    collectCurrencies(sections, data.accountInfo.baseCurrency).forEach(currency => {
+        if (!data.exchangeRates[currency]) {
+            data.exchangeRates[currency] = 1;
+            if (currency !== data.accountInfo.baseCurrency) {
+                fxWarnings.push(`Missing FX rate for ${currency}; using 1 ${currency} = 1 ${data.accountInfo.baseCurrency}.`);
+            }
+        }
+    });
 
     // Process Trades to get premium for options
     const premiumMap: { [symbol: string]: number } = {};
@@ -843,7 +1038,7 @@ export function parseIbkrCsv(csvString: string): ParsedData {
             const symbol = row['Symbol'];
             if (symbol) {
                 const currency = row['Currency'];
-                const exchangeRate = data.exchangeRates[currency] || 1;
+                const exchangeRate = rateFor(data.exchangeRates, currency);
                 // Proceeds are positive for sales (credits). Comm/Fee is negative.
                 const proceeds = safeParseFloat(row['Proceeds']);
                 const commFee = safeParseFloat(row['Comm/Fee']);
@@ -894,14 +1089,15 @@ export function parseIbkrCsv(csvString: string): ParsedData {
             .filter(r => r['DataDiscriminator'] === 'Order' && r['Realized P/L'] && safeParseFloat(r['Realized P/L']) !== 0)
             .map(trade => ({
                 ...trade,
-                parsedDate: new Date(trade['Date/Time'].replace(',', '')).getTime()
+                parsedDate: parseStatementDate(trade['Date/Time'])
             }))
-            .sort((a, b) => b.parsedDate - a.parsedDate); // Sort descending by date
+            .filter(trade => trade.parsedDate !== null)
+            .sort((a, b) => b.parsedDate!.getTime() - a.parsedDate!.getTime()); // Sort descending by date
 
         closingTrades.forEach(trade => {
             const symbol = trade['Symbol'];
             if (symbol && !closeDateBySymbol.has(symbol)) {
-                closeDateBySymbol.set(symbol, new Date(trade.parsedDate).toISOString());
+                closeDateBySymbol.set(symbol, formatDateKey(trade.parsedDate!));
             }
         });
     }
@@ -967,7 +1163,7 @@ export function parseIbkrCsv(csvString: string): ParsedData {
             }
             
             const currency = row['Currency'];
-            const exchangeRate = data.exchangeRates[currency] || 1;
+            const exchangeRate = rateFor(data.exchangeRates, currency);
             const { isOption, optionType, strikePrice, expiry, baseSymbol } = parseOptionSymbol(row['Symbol']);
             
             const position: Position = {
@@ -1029,9 +1225,10 @@ export function parseIbkrCsv(csvString: string): ParsedData {
             .filter(r => r['DataDiscriminator'] === 'Order' && r['Asset Category'] === 'Equity and Index Options')
             .map(trade => ({
                 ...trade,
-                parsedDate: new Date(trade['Date/Time'].replace(',', '')),
+                parsedDate: parseStatementDate(trade['Date/Time']),
             }))
-            .sort((a, b) => a.parsedDate.getTime() - b.parsedDate.getTime());
+            .filter(trade => trade.parsedDate !== null)
+            .sort((a, b) => a.parsedDate!.getTime() - b.parsedDate!.getTime());
 
         for (const trade of allOptionTrades) {
             const quantity = safeParseFloat(trade['Quantity']);
@@ -1077,16 +1274,16 @@ export function parseIbkrCsv(csvString: string): ParsedData {
 
                     const premiumCollected = realizedPLForTrade;
                     const tradeCurrency = trade['Currency'];
-                    const exchangeRate = data.exchangeRates[tradeCurrency] || 1;
+                    const exchangeRate = rateFor(data.exchangeRates, tradeCurrency);
                     const premiumInBase = premiumCollected * exchangeRate;
 
                     if (isOption && optionType === 'P' && strikePrice) {
-                        const multiplier = instrumentMultipliers.get(symbol.trim()) || 100;
+                        const multiplier = instrumentMultipliers.get(symbol.trim()) || DEFAULT_OPTION_MULTIPLIER;
                         const capitalAtRisk = strikePrice * quantity * multiplier;
                         const capitalAtRiskInBase = capitalAtRisk * exchangeRate;
 
-                        if (capitalAtRiskInBase > 0 && premiumInBase > 0) { // Only calculate for winning trades
-                            const aroc = (premiumInBase / capitalAtRiskInBase) * (365 / daysOpen);
+                        if (capitalAtRiskInBase > 0 && Number.isFinite(premiumInBase)) {
+                            const aroc = (premiumInBase / capitalAtRiskInBase) * (DAYS_PER_YEAR / daysOpen);
                             arocTrades.push({
                                 symbol,
                                 premiumCollected: premiumInBase,

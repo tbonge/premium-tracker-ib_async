@@ -5,7 +5,7 @@ import { ParsedData } from '../../types';
 import { useLocalization } from '../../context/LocalizationContext';
 import LanguageSwitcher from '../LanguageSwitcher';
 import { InteractiveBrokersLogo } from '../InteractiveBrokersLogo';
-import { ChevronLeftIcon, DownloadIcon, StocksIcon, CheckCircleIcon, RepeatIcon, TrendingUpIcon } from '../../constants';
+import { ChevronLeftIcon, DAYS_PER_YEAR, DownloadIcon, StocksIcon, CheckCircleIcon, RepeatIcon, TrendingUpIcon } from '../../constants';
 import MetricCard from '../MetricCard';
 import AllocationCharts from './AllocationCharts';
 import PLSummary from './PLSummary';
@@ -72,7 +72,7 @@ const PublicDashboard: React.FC<PublicDashboardProps> = ({ data, dashboardData, 
         if (completedCycles.length === 0) return { annualizedReturn: 0 };
         const totalPL = completedCycles.reduce((sum, cycle) => sum + cycle.totalPL, 0);
         const totalCapitalYears = completedCycles.reduce((sum, cycle) => {
-            const capitalYears = cycle.netAssignmentCost * (cycle.durationDays / 365);
+            const capitalYears = cycle.netAssignmentCost * (cycle.durationDays / DAYS_PER_YEAR);
             return sum + capitalYears;
         }, 0);
         return {

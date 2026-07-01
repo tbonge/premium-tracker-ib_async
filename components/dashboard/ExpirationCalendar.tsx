@@ -5,29 +5,34 @@ import SortableHeader from './SortableHeader';
 import { useSortableRows } from './useSortableRows';
 import { calendarDte } from '../../utils/dates';
 
-interface Props { positions: Position[]; exchangeRates: Record<string, number>; formatCurrency: (value: number) => string; }
+interface CalendarPosition extends Position {
+    assignmentCost?: number;
+    isCashSettled?: boolean;
+}
+
+interface Props { positions: CalendarPosition[]; formatCurrency: (value: number) => string; }
 type Row = { expiry: string; dte: number; tickers: number; puts: number; calls: number; assignmentExposure: number; premium: number; };
 type Key = keyof Row;
 
-const ExpirationCalendar: React.FC<Props> = ({ positions, exchangeRates, formatCurrency }) => {
+const ExpirationCalendar: React.FC<Props> = ({ positions, formatCurrency }) => {
     const { t } = useLocalization();
     const rows = useMemo(() => {
         const grouped = new Map<string, Row & { symbols: Set<string> }>();
         const now = new Date();
-        positions.filter(p => p.isOption && p.quantity < 0 && p.expiry).forEach(position => {
+        positions.filter(p => p.isOption && p.quantity < 0 && p.expiry && !p.isCashSettled).forEach(position => {
             const expiry = position.expiry!;
             const row = grouped.get(expiry) || { expiry, dte: calendarDte(expiry, now) ?? 0, tickers: 0, puts: 0, calls: 0, assignmentExposure: 0, premium: 0, symbols: new Set<string>() };
             row.symbols.add(position.baseSymbol);
             const contracts = Math.abs(position.quantity);
             if (position.optionType === 'P') {
                 row.puts += contracts;
-                row.assignmentExposure += (position.strikePrice || 0) * contracts * (position.multiplier || 100) * (exchangeRates[position.currency] || 1);
+                row.assignmentExposure += position.assignmentCost || 0;
             } else if (position.optionType === 'C') row.calls += contracts;
             row.premium += position.collectedPremium || 0;
             grouped.set(expiry, row);
         });
         return [...grouped.values()].map(row => ({ ...row, tickers: row.symbols.size }));
-    }, [positions, exchangeRates]);
+    }, [positions]);
     const valueFor = useCallback((row: Row, key: Key) => row[key], []);
     const { sortedRows, sort, requestSort } = useSortableRows(rows, 'expiry' as Key, valueFor);
     if (!rows.length) return null;

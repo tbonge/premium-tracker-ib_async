@@ -2,7 +2,7 @@
 import React, { useMemo } from 'react';
 import { WheelCycleAnalysis } from '../../types';
 import MetricCard from '../MetricCard';
-import { MoneyIcon, TrendingUpIcon, RepeatIcon, GiftIcon } from '../../constants';
+import { DAYS_PER_YEAR, MoneyIcon, TrendingUpIcon, RepeatIcon, GiftIcon } from '../../constants';
 import { useLocalization } from '../../context/LocalizationContext';
 
 interface WheelStrategySummaryProps {
@@ -28,7 +28,7 @@ const WheelStrategySummary: React.FC<WheelStrategySummaryProps> = ({ wheelCycleA
         const avgDuration = completedCycles.length > 0 ? totalDuration / completedCycles.length : 0;
 
         const totalCapitalYears = completedCycles.reduce((sum, cycle) => {
-            const capitalYears = cycle.netAssignmentCost * (cycle.durationDays / 365);
+            const capitalYears = cycle.netAssignmentCost * (cycle.durationDays / DAYS_PER_YEAR);
             return sum + capitalYears;
         }, 0);
         const annualizedReturn = totalCapitalYears > 0 ? totalPL / totalCapitalYears : 0;

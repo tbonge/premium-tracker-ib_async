@@ -9,7 +9,8 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { ParsedData, Position } from '../types';
+import { ParsedData } from '../types';
+import { calculatePutCollateral } from '../services/analytics';
 
 interface LabsDashboardProps {
   data: ParsedData;
@@ -152,15 +153,9 @@ const LabsDashboard: React.FC<LabsDashboardProps> = ({
 
   const capital = useMemo(() => {
     const deployed = data.positions.reduce((sum, position) => sum + Math.abs(position.value), 0);
-    const collateral = data.positions
-      .filter((position) => position.isOption && position.optionType === 'P' && position.quantity < 0)
-      .reduce((sum, position) => {
-        const rate = data.exchangeRates[position.currency] || 1;
-        return sum + (position.strikePrice || 0) * Math.abs(position.quantity) * (position.multiplier || 100) * rate;
-      }, 0);
+    const collateral = calculatePutCollateral(data.positions, data.exchangeRates, data.nav.baseCurrency);
     return { deployed, collateral };
-  }, [data.exchangeRates, data.positions]);
-
+  }, [data.exchangeRates, data.nav.baseCurrency, data.positions]);
   const contributionRows = symbolRows.filter((row) => row.totalPL !== 0).slice(0, 9);
   const maxContribution = Math.max(...contributionRows.map((row) => Math.abs(row.totalPL)), 1);
 

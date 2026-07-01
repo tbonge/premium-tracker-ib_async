@@ -3,6 +3,7 @@ import { Position } from '../../types';
 import { useLocalization } from '../../context/LocalizationContext';
 import SortableHeader from './SortableHeader';
 import { useSortableRows } from './useSortableRows';
+import { DEFAULT_DASHBOARD_THRESHOLDS } from '../../constants';
 
 interface ShortPutPosition extends Position {
     dte?: number;
@@ -25,7 +26,7 @@ type Candidate = ShortPutPosition & {
 };
 type SortKey = 'symbol' | 'dte' | 'strikePrice' | 'stockPrice' | 'breakevenPrice' | 'premium' | 'closeCost' | 'capturedProfit' | 'capture';
 
-const BuyToCloseCandidates: React.FC<Props> = ({ puts, formatInSelectedCurrency, formatCurrency, captureThreshold = 0.75 }) => {
+const BuyToCloseCandidates: React.FC<Props> = ({ puts, formatInSelectedCurrency, formatCurrency, captureThreshold = DEFAULT_DASHBOARD_THRESHOLDS.capture }) => {
     const { t, locale } = useLocalization();
     const candidates = useMemo(() => puts.map(position => {
         const premium = position.collectedPremium || 0;

@@ -18,7 +18,7 @@ import AssignedPutPositions from './dashboard/AssignedPutPositions';
 import Footer from './Footer';
 import PublicDashboard from './dashboard/PublicDashboard';
 import { useLocalization } from '../context/LocalizationContext';
-import { WarningIcon } from '../constants';
+import { DEFAULT_DASHBOARD_THRESHOLDS, DEFAULT_OPTION_MULTIPLIER, LEAPS_DTE_THRESHOLD, WarningIcon } from '../constants';
 import MarginLiquidityRisk from './dashboard/MarginLiquidityRisk';
 import ExpirationCalendar from './dashboard/ExpirationCalendar';
 import NAVDrawdownHistory from './dashboard/NAVDrawdownHistory';
@@ -28,10 +28,13 @@ import { calendarDte } from '../utils/dates';
 import BuyToCloseCandidates from './dashboard/BuyToCloseCandidates';
 import CollapsibleWidget, { SortableWidgetGroup } from './dashboard/CollapsibleWidget';
 import LeapsDeepDive from './dashboard/LeapsDeepDive';
+import CashSettledOptions from './dashboard/CashSettledOptions';
+import ActionRequiredPanel from './dashboard/ActionRequiredPanel';
+import { buildEnhancedShortOptions } from '../services/analytics';
 
 const widgetOrder = [
-    'margin-risk', 'pl-summary', 'nav-history', 'performance', 'fees', 'buy-to-close',
-    'assignment-risk', 'expiration-calendar', 'options-performance', 'leaps', 'premium-efficiency',
+    'margin-risk', 'pl-summary', 'nav-history', 'performance', 'fees', 'action-required', 'buy-to-close',
+    'assignment-risk', 'cash-settled', 'expiration-calendar', 'options-performance', 'leaps', 'premium-efficiency',
     'covered-call-planning', 'allocations', 'open-positions', 'closed-positions',
     'wheel-summary', 'wheel-timeline', 'wheel-cycles',
 ];
@@ -48,6 +51,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
     const [view, setView] = useState<'private' | 'public'>('private');
     const [selectedCurrency, setSelectedCurrency] = useState<string>(data.exchangeRates.USD ? 'USD' : data.nav.baseCurrency);
     const [allocationFilters, setAllocationFilters] = useState({ stocks: true, puts: true, calls: true });
+    const [thresholds, setThresholds] = useState(DEFAULT_DASHBOARD_THRESHOLDS);
 
     const formatCurrency = useMemo(() => (value: number, currency: string) => {
         return new Intl.NumberFormat(locale, { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
@@ -72,112 +76,34 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
 
     const dashboardData = useMemo(() => {
         const stockPositions = data.positions.filter(p => !p.isOption);
-        const stockPriceMap = new Map<string, number>();
-        stockPositions.forEach(p => {
-            if (p.closePrice > 0) {
-                stockPriceMap.set(p.symbol, p.closePrice);
-            }
-        });
-        data.positions.forEach(p => {
-            if (p.isOption && p.baseSymbol && p.underlyingPrice && p.underlyingPrice > 0 && !stockPriceMap.has(p.baseSymbol)) {
-                stockPriceMap.set(p.baseSymbol, p.underlyingPrice);
-            }
-        });
         const today = new Date();
-
-        const shortPuts = data.positions
-            .filter(p => p.isOption && p.optionType === 'P' && p.quantity < 0)
-            .map(p => {
-                const assignmentCostInOriginalCurrency = (p.strikePrice || 0) * Math.abs(p.quantity) * p.multiplier;
-                const exchangeRate = data.exchangeRates[p.currency] || 1;
-                const stockPrice = stockPriceMap.get(p.baseSymbol);
-                
-                const dte = calendarDte(p.expiry, today);
-
-                const moneyness = (stockPrice !== undefined && p.strikePrice) ? (stockPrice - p.strikePrice) / p.strikePrice : undefined;
-
-                // p.collectedPremium is in BASE currency. For the breakeven calculation, we must work in the position's currency.
-                const collectedPremiumInBase = p.collectedPremium || 0;
-                const positionCurrency = p.currency;
-                const baseCurrency = data.nav.baseCurrency;
-                
-                let premiumInPositionCurrency = collectedPremiumInBase;
-
-                // If the position's currency is different from the base currency, convert the premium
-                if (positionCurrency !== baseCurrency) {
-                    const exchangeRateForPosition = data.exchangeRates[positionCurrency];
-                    // The rate is 'base currency per 1 unit of position currency'.
-                    // To convert from base to position currency, we divide.
-                    if (exchangeRateForPosition && exchangeRateForPosition !== 0) {
-                        premiumInPositionCurrency = collectedPremiumInBase / exchangeRateForPosition;
-                    } else {
-                        // If rate is missing, we cannot calculate accurately. Set to 0 to avoid bad data.
-                        premiumInPositionCurrency = 0;
-                    }
-                }
-                
-                const premiumPerShare = (premiumInPositionCurrency && p.multiplier > 0) ? (premiumInPositionCurrency / (Math.abs(p.quantity) * p.multiplier)) : 0;
-                const breakevenPrice = p.strikePrice ? p.strikePrice - premiumPerShare : undefined;
-
-                return { 
-                    ...p, 
-                    assignmentCost: assignmentCostInOriginalCurrency * exchangeRate,
-                    dte,
-                    moneyness,
-                    breakevenPrice,
-                    stockPrice
-                };
-            });
-        
-        const shortCalls = data.positions
-            .filter(p => p.isOption && p.optionType === 'C' && p.quantity < 0)
-            .map(p => {
-                const stockPrice = stockPriceMap.get(p.baseSymbol);
-                
-                const dte = calendarDte(p.expiry, today);
-
-                const moneyness = (stockPrice !== undefined && p.strikePrice) ? (stockPrice - p.strikePrice) / p.strikePrice : undefined;
-
-                // Breakeven calculation for calls
-                const collectedPremiumInBase = p.collectedPremium || 0;
-                const positionCurrency = p.currency;
-                const baseCurrency = data.nav.baseCurrency;
-                
-                let premiumInPositionCurrency = collectedPremiumInBase;
-
-                if (positionCurrency !== baseCurrency) {
-                    const exchangeRateForPosition = data.exchangeRates[positionCurrency];
-                    if (exchangeRateForPosition && exchangeRateForPosition !== 0) {
-                        premiumInPositionCurrency = collectedPremiumInBase / exchangeRateForPosition;
-                    } else {
-                        premiumInPositionCurrency = 0;
-                    }
-                }
-                
-                const premiumPerShare = (premiumInPositionCurrency && p.multiplier > 0) ? (premiumInPositionCurrency / (Math.abs(p.quantity) * p.multiplier)) : 0;
-                // Breakeven for call is STRIKE + PREMIUM
-                const breakevenPrice = p.strikePrice ? p.strikePrice + premiumPerShare : undefined;
-
-                return {
-                    ...p,
-                    dte,
-                    moneyness,
-                    breakevenPrice,
-                    stockPrice
-                };
-            });
-        const leapsPositions = data.positions.filter(position => position.isOption && (calendarDte(position.expiry, today) ?? -Infinity) >= 365);
+        const { shortPuts, shortCalls } = buildEnhancedShortOptions(data.positions, data.exchangeRates, data.nav.baseCurrency, today);
+        const cashSettledOptions = [...shortPuts, ...shortCalls]
+            .filter(position => position.isCashSettled)
+            .sort((a, b) => (a.expiry || '').localeCompare(b.expiry || '') || a.symbol.localeCompare(b.symbol));
+        const physicalPutSpreads = shortPuts.filter(position => !position.isCashSettled && position.maxLoss !== undefined);
+        const leapsPositions = data.positions.filter(position => position.isOption && (calendarDte(position.expiry, today) ?? -Infinity) >= LEAPS_DTE_THRESHOLD);
         
         const likelyAssignments: (typeof shortPuts[0])[] = [];
         const unlikelyAssignments: (typeof shortPuts[0])[] = [];
 
         shortPuts.forEach(p => {
+            if (p.isCashSettled) return;
+            if (p.expirationOutcome === 'defined-loss') return;
             let isLikely = false;
-            // Use moneyness if available, otherwise fallback to P/L
+            // Assignment risk is driven by price/strike proximity, delta and
+            // time remaining. P/L is deliberately not used: a far-OTM option
+            // can have a temporary loss without meaningful assignment risk.
             if (p.moneyness !== undefined) {
-                isLikely = p.moneyness < 0; // Negative moneyness means ITM for puts
-            } else {
-                isLikely = p.unrealizedPL < 0;
+                const absDelta = Math.abs(p.delta || 0);
+                const dte = p.dte ?? Infinity;
+                const distance = Math.abs(p.moneyness);
+                const isItm = p.moneyness < 0;
+                isLikely = (dte <= 0 && isItm)
+                    || absDelta >= thresholds.rollDelta
+                    || (isItm && dte <= thresholds.itmReviewDte && (absDelta === 0 || absDelta >= 0.50))
+                    || (distance <= 0.02 && dte <= thresholds.nearStrikeDte && absDelta >= 0.35)
+                    || (distance <= 0.05 && dte <= thresholds.urgentDte && absDelta >= 0.25);
             }
             
             if (isLikely) {
@@ -187,8 +113,8 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
             }
         });
 
-        const likelyAssignmentValue = likelyAssignments.reduce((sum, p) => sum + p.assignmentCost, 0);
-        const unlikelyAssignmentValue = unlikelyAssignments.reduce((sum, p) => sum + p.assignmentCost, 0);
+        const likelyAssignmentValue = likelyAssignments.reduce((sum, p) => sum + p.shareAssignmentCost, 0);
+        const unlikelyAssignmentValue = unlikelyAssignments.reduce((sum, p) => sum + p.shareAssignmentCost, 0);
 
         const cashBalance = data.nav.cash;
         const likelyCashNeeded = Math.max(0, likelyAssignmentValue - cashBalance);
@@ -198,7 +124,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
         const createExpiryDetails = (assignments: (typeof shortPuts[0])[]) => {
              const assignmentByExpiry = assignments.reduce((acc, p) => {
                 const expiry = p.expiry || 'Unknown';
-                acc[expiry] = (acc[expiry] || 0) + p.assignmentCost;
+                acc[expiry] = (acc[expiry] || 0) + p.shareAssignmentCost;
                 return acc;
             }, {} as Record<string, number>);
 
@@ -373,7 +299,9 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
             unrealizedPL: shortCalls.reduce((sum, p) => sum + p.unrealizedPL, 0),
         };
         
-        const maxAssignmentValue = shortPuts.reduce((sum, p) => sum + p.assignmentCost, 0);
+        const maxAssignmentValue = shortPuts
+            .filter(p => !p.isCashSettled)
+            .reduce((sum, p) => sum + p.assignmentCost, 0);
         const returnOnMaxRisk = maxAssignmentValue > 0 ? (shortPutPerformance.premium / maxAssignmentValue * 100) : 0;
         const shortPutLeverage = data.totalNAV > 0 ? maxAssignmentValue / data.totalNAV : 0;
         const shortPutLeverageCash = data.nav.cash > 0 ? maxAssignmentValue / data.nav.cash : (maxAssignmentValue > 0 ? Infinity : 0);
@@ -382,6 +310,8 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
         return { 
             shortPuts,
             shortCalls,
+            cashSettledOptions,
+            physicalPutSpreads,
             leapsPositions,
             stockPositions, 
             cashBalance, 
@@ -404,7 +334,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
             likelyShortfallDetails,
             unlikelyShortfallDetails,
         };
-    }, [data, selectedCurrency, allocationFilters, locale]);
+    }, [data, selectedCurrency, allocationFilters, locale, thresholds]);
 
     if (view === 'public') {
         return <PublicDashboard data={data} dashboardData={dashboardData} onExit={() => setView('private')} />;
@@ -412,14 +342,15 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
 
     const latestWeek = data.weeklySummary[data.weeklySummary.length - 1];
     const totalFees = data.weeklySummary.reduce((sum, row) => sum + row.commissions + row.fees + row.salesTax, 0);
-    const optionPositions = data.positions.filter(position => position.isOption);
-    const nearestExpiry = optionPositions.map(position => position.expiry).filter(Boolean).sort()[0];
+    const calendarPositions = [...dashboardData.shortPuts, ...dashboardData.shortCalls]
+        .filter(position => !position.isCashSettled);
+    const nearestExpiry = calendarPositions.map(position => position.expiry).filter(Boolean).sort()[0];
     const pendingCycles = data.wheelCycleAnalysis.pendingCycles;
     const completedCycles = data.wheelCycleAnalysis.completedCycles;
     const coveredAssignedCycles = pendingCycles.filter(cycle => {
         const coveredShares = data.positions
             .filter(position => position.isOption && position.optionType === 'C' && position.quantity < 0 && position.baseSymbol === cycle.symbol)
-            .reduce((sum, position) => sum + Math.abs(position.quantity) * (position.multiplier || 100), 0);
+            .reduce((sum, position) => sum + Math.abs(position.quantity) * (position.multiplier || DEFAULT_OPTION_MULTIPLIER), 0);
         return coveredShares >= cycle.assignmentShares;
     }).length;
     
@@ -453,7 +384,42 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                     </div>
                 </div>
             )}
+            <section className="mb-6 border-y border-brand-card py-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4 text-sm">
+                    <label className="space-y-1">
+                        <span className="text-brand-text-secondary">{t('dashboard.settings.capture')}</span>
+                        <input className="w-full accent-brand-accent" type="range" min="0.5" max="0.95" step="0.05" value={thresholds.capture} onChange={event => setThresholds(prev => ({ ...prev, capture: Number(event.target.value) }))} />
+                        <span className="font-mono">{Math.round(thresholds.capture * 100)}%</span>
+                    </label>
+                    <label className="space-y-1">
+                        <span className="text-brand-text-secondary">{t('dashboard.settings.rollDelta')}</span>
+                        <input className="w-full accent-brand-accent" type="range" min="0.3" max="0.9" step="0.05" value={thresholds.rollDelta} onChange={event => setThresholds(prev => ({ ...prev, rollDelta: Number(event.target.value) }))} />
+                        <span className="font-mono">{thresholds.rollDelta.toFixed(2)}</span>
+                    </label>
+                    <label className="space-y-1">
+                        <span className="text-brand-text-secondary">{t('dashboard.settings.urgentDte')}</span>
+                        <input className="w-full bg-brand-card rounded p-2" type="number" min="0" max="30" value={thresholds.urgentDte} onChange={event => setThresholds(prev => ({ ...prev, urgentDte: Number(event.target.value) }))} />
+                    </label>
+                    <label className="space-y-1">
+                        <span className="text-brand-text-secondary">{t('dashboard.settings.rollDte')}</span>
+                        <input className="w-full bg-brand-card rounded p-2" type="number" min="1" max="60" value={thresholds.rollDte} onChange={event => setThresholds(prev => ({ ...prev, rollDte: Number(event.target.value) }))} />
+                    </label>
+                    <label className="space-y-1">
+                        <span className="text-brand-text-secondary">{t('dashboard.settings.spreadLoss')}</span>
+                        <input className="w-full accent-brand-accent" type="range" min="0.3" max="0.95" step="0.05" value={thresholds.spreadLoss} onChange={event => setThresholds(prev => ({ ...prev, spreadLoss: Number(event.target.value) }))} />
+                        <span className="font-mono">{Math.round(thresholds.spreadLoss * 100)}%</span>
+                    </label>
+                </div>
+            </section>
             <SortableWidgetGroup ids={widgetOrder}>
+            {dashboardData.shortPuts.length > 0 && <CollapsibleWidget id="action-required" title={t('dashboard.actionRequired.title')} summary={`${dashboardData.shortPuts.length} puts scanned | ${Math.round(thresholds.capture * 100)}% capture`}>
+                <ActionRequiredPanel
+                puts={dashboardData.shortPuts}
+                thresholds={thresholds}
+                formatInSelectedCurrency={formatInSelectedCurrency}
+                formatCurrency={formatCurrency}
+                />
+            </CollapsibleWidget>}
             <CollapsibleWidget id="margin-risk" title={t('dashboard.marginRisk.title')} summary={`Available ${formatInSelectedCurrency(data.marginLiquidity.availableFunds)} | Likely assignments ${formatInSelectedCurrency(dashboardData.likelyAssignmentValue)}`}>
                 <MarginLiquidityRisk data={data.marginLiquidity} likelyAssignmentValue={dashboardData.likelyAssignmentValue} formatCurrency={formatInSelectedCurrency} />
             </CollapsibleWidget>
@@ -474,7 +440,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                 <FeesChart data={data.weeklySummary} formatInSelectedCurrency={formatInSelectedCurrency} />
             </CollapsibleWidget>}
             {dashboardData.shortPuts.length > 0 && <CollapsibleWidget id="buy-to-close" title={t('dashboard.buyToClose.title')} summary={`${dashboardData.shortPuts.length} open puts | Premium ${formatInSelectedCurrency(dashboardData.putTotals.collectedPremium)}`}>
-                <BuyToCloseCandidates puts={dashboardData.shortPuts} formatInSelectedCurrency={formatInSelectedCurrency} formatCurrency={formatCurrency} />
+                <BuyToCloseCandidates puts={dashboardData.shortPuts} captureThreshold={thresholds.capture} formatInSelectedCurrency={formatInSelectedCurrency} formatCurrency={formatCurrency} />
             </CollapsibleWidget>}
             <CollapsibleWidget id="assignment-risk" title={t('dashboard.putRisk.title')} summary={`${dashboardData.likelyAssignments.length} likely | Cash needed ${formatInSelectedCurrency(dashboardData.likelyCashNeeded)}`}>
                 <ShortPutRisk
@@ -486,12 +452,16 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                 likelyAssignments={dashboardData.likelyAssignments}
                 likelyShortfallDetails={dashboardData.likelyShortfallDetails}
                 unlikelyShortfallDetails={dashboardData.unlikelyShortfallDetails}
+                spreadOutcomes={dashboardData.physicalPutSpreads}
                 formatInSelectedCurrency={formatInSelectedCurrency}
                 formatCurrency={formatCurrency}
                 />
             </CollapsibleWidget>
-            {optionPositions.length > 0 && <CollapsibleWidget id="expiration-calendar" title={t('dashboard.expirationCalendar.title')} summary={`${optionPositions.length} open options | Next expiry ${nearestExpiry || '-'}`}>
-                <ExpirationCalendar positions={data.positions} exchangeRates={data.exchangeRates} formatCurrency={formatInSelectedCurrency} />
+            {dashboardData.cashSettledOptions.length > 0 && <CollapsibleWidget id="cash-settled" title={t('dashboard.cashSettled.title')} summary={`${dashboardData.cashSettledOptions.length} positions | Net premium ${formatInSelectedCurrency(dashboardData.cashSettledOptions.reduce((sum, position) => sum + (position.collectedPremium || 0), 0))}`}>
+                <CashSettledOptions positions={dashboardData.cashSettledOptions} formatInSelectedCurrency={formatInSelectedCurrency} formatCurrency={formatCurrency} />
+            </CollapsibleWidget>}
+            {calendarPositions.length > 0 && <CollapsibleWidget id="expiration-calendar" title={t('dashboard.expirationCalendar.title')} summary={`${calendarPositions.length} physical-settlement short options | Next expiry ${nearestExpiry || '-'}`}>
+                <ExpirationCalendar positions={calendarPositions} formatCurrency={formatInSelectedCurrency} />
             </CollapsibleWidget>}
             <CollapsibleWidget id="options-performance" title={t('dashboard.shortOptionsStrategy.title')} summary={`Closed puts ${formatInSelectedCurrency(data.shortPutIncomeSummary.totalRealizedPL)} | Closed calls ${formatInSelectedCurrency(data.shortCallIncomeSummary.totalRealizedPL)}`}>
                 <ShortOptionsPerformance

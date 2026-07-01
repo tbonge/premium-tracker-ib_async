@@ -12,8 +12,8 @@ interface WheelCyclesProps {
     baseCurrency: string;
 }
 
-type SortKeys = 'symbol' | 'startDate' | 'endDate' | 'durationDays' | 'totalCallPremium' | 'stockPL' | 'totalPL' | 'returnOnCost';
-type PendingSortKeys = 'symbol' | 'startDate' | 'netAssignmentCost' | 'totalCallPremium' | 'currentStockValue' | 'unrealizedStockPL' | 'currentTotalPL';
+type SortKeys = 'symbol' | 'startDate' | 'endDate' | 'durationDays' | 'totalCallPremium' | 'stockPL' | 'totalPL' | 'returnOnCost' | 'annualizedReturn';
+type PendingSortKeys = 'symbol' | 'startDate' | 'netAssignmentCost' | 'totalCallPremium' | 'currentStockValue' | 'unrealizedStockPL' | 'currentTotalPL' | 'annualizedReturn';
 
 
 const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInSelectedCurrency, formatCurrency }) => {
@@ -161,6 +161,7 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
                                     <SortablePendingHeader sortKey="currentStockValue" headerKey="dashboard.wheel.pending.headers.currentValue" />
                                     <SortablePendingHeader sortKey="unrealizedStockPL" headerKey="dashboard.wheel.pending.headers.unrealizedStockPL" />
                                     <SortablePendingHeader sortKey="currentTotalPL" headerKey='dashboard.wheel.pending.headers.currentTotalPL' tooltipKey='dashboard.wheel.pending.tooltips.currentTotalPL' tooltipAlign="right" />
+                                    <SortablePendingHeader sortKey="annualizedReturn" headerKey='dashboard.wheel.pending.headers.annualizedReturn' />
                                 </tr>
                             </thead>
                             <tbody>
@@ -183,10 +184,13 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
                                             <td className={`p-2 font-mono font-semibold text-right ${cycle.currentTotalPL >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>
                                                 {formatInSelectedCurrency(cycle.currentTotalPL)}
                                             </td>
+                                            <td className={`p-2 font-mono font-semibold text-right ${(cycle.annualizedReturn || 0) >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>
+                                                {(cycle.annualizedReturn || 0).toLocaleString(locale, { style: 'percent', minimumFractionDigits: 2 })}
+                                            </td>
                                         </tr>
                                          {expandedPendingRow === i && (
                                             <tr className="bg-brand-card/30">
-                                                <td colSpan={8} className="p-4">
+                                                <td colSpan={9} className="p-4">
                                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-brand-card p-4 rounded-md">
                                                         <div>
                                                             <h4 className="font-semibold text-brand-text-primary mb-2">{t('dashboard.wheel.details.costBasisTitle')}</h4>
@@ -238,6 +242,7 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
                                     <td className={`p-2 font-mono text-right font-semibold ${pendingTotals.currentTotalPL >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>
                                         {formatInSelectedCurrency(pendingTotals.currentTotalPL)}
                                     </td>
+                                    <td className="p-2"></td>
                                 </tr>
                             </tfoot>
                         </table>
@@ -260,6 +265,7 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
                                     <SortableHeader sortKey="stockPL" headerKey="dashboard.wheel.completed.headers.stockPL" />
                                     <SortableHeader sortKey="totalPL" headerKey='dashboard.wheel.completed.headers.totalPL' tooltipKey='dashboard.wheel.completed.tooltips.totalPL' />
                                     <SortableHeader sortKey="returnOnCost" headerKey='dashboard.wheel.completed.headers.returnOnCost' tooltipKey='dashboard.wheel.completed.tooltips.returnOnCost' tooltipAlign="right" />
+                                    <SortableHeader sortKey="annualizedReturn" headerKey='dashboard.wheel.completed.headers.annualizedReturn' tooltipKey='dashboard.wheel.completed.tooltips.annualizedReturn' tooltipAlign="right" />
                                 </tr>
                             </thead>
                             <tbody>
@@ -284,6 +290,9 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
                                             </td>
                                             <td className={`p-2 font-mono font-semibold text-right ${cycle.returnOnCost >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>
                                                 {cycle.returnOnCost.toLocaleString(locale, { style: 'percent', minimumFractionDigits: 2 })}
+                                            </td>
+                                            <td className={`p-2 font-mono font-semibold text-right ${cycle.annualizedReturn >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>
+                                                {cycle.annualizedReturn.toLocaleString(locale, { style: 'percent', minimumFractionDigits: 2 })}
                                             </td>
                                         </tr>
                                         {expandedCompletedRow === i && (
@@ -343,6 +352,7 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
                                     <td className={`p-2 font-mono font-semibold text-right ${completedTotals.totalPL >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>
                                         {formatInSelectedCurrency(completedTotals.totalPL)}
                                     </td>
+                                    <td className="p-2"></td>
                                     <td className="p-2"></td>
                                 </tr>
                             </tfoot>

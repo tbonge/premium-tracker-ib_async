@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { PendingWheelCycle, Position } from '../../types';
 import { useLocalization } from '../../context/LocalizationContext';
 import SortableHeader, { compareSortValues, SortDirection } from './SortableHeader';
-import { AlertTriangleIcon, CheckCircleIcon } from '../../constants';
+import { AlertTriangleIcon, CheckCircleIcon, DEFAULT_OPTION_MULTIPLIER } from '../../constants';
 
 interface AssignedPutPositionsProps {
     cycles: PendingWheelCycle[];
@@ -12,14 +12,14 @@ interface AssignedPutPositionsProps {
     formatCurrency: (value: number, currency: string) => string;
 }
 
-type SortKey = 'symbol' | 'startDate' | 'assignmentShares' | 'assignmentPrice' | 'costBasisPerShare' | 'currentPrice' | 'daysHeld' | 'availableShares' | 'openCallStrike' | 'coverageStatus' | 'totalCallPremium' | 'currentTotalPL';
+type SortKey = 'symbol' | 'startDate' | 'assignmentShares' | 'assignmentPrice' | 'costBasisPerShare' | 'currentPrice' | 'daysHeld' | 'availableShares' | 'openCallStrike' | 'coverageStatus' | 'coverageRatio' | 'minimumCallStrike' | 'targetCallStrike' | 'totalCallPremium' | 'currentTotalPL';
 
 const AssignedPutPositions: React.FC<AssignedPutPositionsProps> = ({ cycles, positions, exchangeRates, formatInSelectedCurrency, formatCurrency }) => {
     const { t } = useLocalization();
     const [sort, setSort] = useState<{ key: SortKey; direction: SortDirection }>({ key: 'startDate', direction: 'desc' });
     const rows = useMemo(() => cycles.map(cycle => {
         const openCalls = positions.filter(position => position.isOption && position.optionType === 'C' && position.quantity < 0 && position.baseSymbol === cycle.symbol);
-        const coveredShares = openCalls.reduce((sum, position) => sum + Math.abs(position.quantity) * (position.multiplier || 100), 0);
+        const coveredShares = openCalls.reduce((sum, position) => sum + Math.abs(position.quantity) * (position.multiplier || DEFAULT_OPTION_MULTIPLIER), 0);
         const openCallContracts = openCalls.reduce((sum, position) => sum + Math.abs(position.quantity), 0);
         const openCallStrike = openCallContracts
             ? openCalls.reduce((sum, position) => sum + (position.strikePrice || 0) * Math.abs(position.quantity), 0) / openCallContracts
@@ -34,12 +34,18 @@ const AssignedPutPositions: React.FC<AssignedPutPositionsProps> = ({ cycles, pos
         const start = new Date(`${cycle.startDate}T00:00:00`).getTime();
         const daysHeld = Number.isFinite(start) ? Math.max(0, Math.floor((Date.now() - start) / 86400000)) : 0;
         const availableShares = Math.max(0, cycle.assignmentShares - coveredShares);
+        const coverageRatio = cycle.assignmentShares > 0 ? coveredShares / cycle.assignmentShares : 0;
+        const minimumCallStrike = Math.max(cycle.assignmentPrice, costBasisPerShare);
+        const targetCallStrike = Math.max(minimumCallStrike, currentPrice * 1.05);
         return {
             ...cycle,
             currentPrice,
             costBasisPerShare,
             daysHeld,
             availableShares,
+            coverageRatio,
+            minimumCallStrike,
+            targetCallStrike,
             openCallStrike,
             hasMultipleCallStrikes,
             coverageStatus: availableShares < 100 ? 1 : 0,
@@ -61,17 +67,20 @@ const AssignedPutPositions: React.FC<AssignedPutPositionsProps> = ({ cycles, pos
             <h2 className="text-2xl font-bold mb-1">{t('dashboard.assignedPuts.title')}</h2>
             <p className="text-sm text-brand-text-secondary mb-4">{t('dashboard.assignedPuts.description')}</p>
             <div className="overflow-x-auto">
-                <table className="w-full min-w-[1080px] text-left text-sm">
+                <table className="w-full min-w-[1280px] text-left text-sm">
                     <thead><tr className="border-b border-brand-card">
                         {header('symbol', t('dashboard.assignedPuts.symbol'), false)}
                         {header('coverageStatus', t('dashboard.assignedPuts.status'), false)}
                         {header('startDate', t('dashboard.assignedPuts.assigned'), false)}
                         {header('assignmentShares', t('dashboard.assignedPuts.shares'))}
                         {header('availableShares', t('dashboard.assignedPuts.availableShares'))}
+                        {header('coverageRatio', t('dashboard.assignedPuts.coverage'))}
                         {header('openCallStrike', t('dashboard.assignedPuts.openCalls'))}
                         {header('assignmentPrice', t('dashboard.assignedPuts.assignmentPrice'))}
                         {header('costBasisPerShare', t('dashboard.assignedPuts.breakeven'))}
                         {header('currentPrice', t('dashboard.assignedPuts.currentPrice'))}
+                        {header('minimumCallStrike', t('dashboard.assignedPuts.minStrike'))}
+                        {header('targetCallStrike', t('dashboard.assignedPuts.targetStrike'))}
                         {header('daysHeld', t('dashboard.assignedPuts.daysHeld'))}
                         {header('totalCallPremium', t('dashboard.assignedPuts.callPremium'))}
                         {header('currentTotalPL', t('dashboard.assignedPuts.totalPL'))}
@@ -87,6 +96,7 @@ const AssignedPutPositions: React.FC<AssignedPutPositionsProps> = ({ cycles, pos
                             </td>
                             <td className="p-2 font-mono">{row.startDate}</td>
                             <td className="p-2 font-mono text-right">{row.assignmentShares}</td><td className={`p-2 font-mono text-right ${row.availableShares >= 100 ? 'text-brand-danger' : 'text-brand-text-secondary'}`}>{row.availableShares}</td>
+                            <td className="p-2 font-mono text-right">{row.coverageRatio.toLocaleString(undefined, { style: 'percent', maximumFractionDigits: 0 })}</td>
                             <td className="p-2">
                                 {row.openCallStrike ? (
                                     <div className="font-mono text-right whitespace-nowrap">
@@ -97,6 +107,8 @@ const AssignedPutPositions: React.FC<AssignedPutPositionsProps> = ({ cycles, pos
                             </td>
                             <td className="p-2 font-mono text-right">{formatCurrency(row.assignmentPrice, row.currency)}</td><td className="p-2 font-mono text-right">{formatCurrency(row.costBasisPerShare, row.currency)}</td>
                             <td className={`p-2 font-mono text-right ${row.currentPrice < row.costBasisPerShare ? 'text-brand-danger' : 'text-brand-success'}`}>{formatCurrency(row.currentPrice, row.currency)}</td>
+                            <td className="p-2 font-mono text-right">{formatCurrency(row.minimumCallStrike, row.currency)}</td>
+                            <td className="p-2 font-mono text-right">{formatCurrency(row.targetCallStrike, row.currency)}</td>
                             <td className="p-2 font-mono text-right">{row.daysHeld}</td><td className="p-2 font-mono text-right text-brand-success">{formatInSelectedCurrency(row.totalCallPremium)}</td>
                             <td className={`p-2 font-mono text-right ${row.currentTotalPL >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>{formatInSelectedCurrency(row.currentTotalPL)}</td>
                         </tr>

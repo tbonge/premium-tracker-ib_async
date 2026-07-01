@@ -1,5 +1,19 @@
 import React from 'react';
 
+export const DEFAULT_OPTION_MULTIPLIER = 100;
+export const DAYS_PER_YEAR = 365;
+export const LEAPS_DTE_THRESHOLD = 365;
+export const CASH_SETTLED_INDEX_SYMBOLS = ['SPX', 'SPXW', 'XSP'];
+export const DEFAULT_DASHBOARD_THRESHOLDS = {
+  capture: 0.75,
+  rollDelta: 0.65,
+  urgentDte: 7,
+  rollDte: 21,
+  spreadLoss: 0.70,
+  itmReviewDte: 45,
+  nearStrikeDte: 14,
+};
+
 export const UploadIcon = (props: React.SVGProps<SVGSVGElement>) => (
   <svg
     {...props}

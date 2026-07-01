@@ -10,6 +10,7 @@ export interface Position {
   costBasis: number;
   closePrice: number;
   underlyingPrice?: number;
+  delta?: number | null;
   value: number;
   unrealizedPL: number;
   currency: string;
@@ -85,6 +86,7 @@ export interface WheelCycle {
   totalPL: number;
   durationDays: number;
   returnOnCost: number;
+  annualizedReturn: number;
   startDate: string;
   endDate: string;
   assignmentPrice: number;
@@ -108,6 +110,7 @@ export interface PendingWheelCycle {
   assignmentCost: number;
   netAssignmentCost: number;
   totalCallPremium: number;
+  annualizedReturn?: number;
   currentStockValue: number;
   unrealizedStockPL: number;
   currentTotalPL: number;

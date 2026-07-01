@@ -17,7 +17,25 @@ interface LocalizationContextType {
 
 const LocalizationContext = createContext<LocalizationContextType | undefined>(undefined);
 
-const translations = { en, cs, es, pl, hr, uk };
+const mergeTranslations = (fallback: any, override: any): any => {
+  if (typeof fallback !== 'object' || fallback === null || Array.isArray(fallback)) {
+    return override === undefined ? fallback : override;
+  }
+  const merged: any = { ...fallback };
+  Object.keys(override || {}).forEach(key => {
+    merged[key] = mergeTranslations(fallback[key], override[key]);
+  });
+  return merged;
+};
+
+const translations = {
+  en,
+  cs: mergeTranslations(en, cs),
+  es: mergeTranslations(en, es),
+  pl: mergeTranslations(en, pl),
+  hr: mergeTranslations(en, hr),
+  uk: mergeTranslations(en, uk),
+};
 
 const getInitialLanguage = (): Language => {
     try {
