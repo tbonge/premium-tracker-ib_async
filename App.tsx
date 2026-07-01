@@ -435,6 +435,7 @@ const App: React.FC = () => {
       tickerPL: mergedTickerPL,
       wheelCycleAnalysis: mergedWheelCycleAnalysis,
       marginLiquidity: liveData.marginLiquidity || statementData.marginLiquidity,
+      importDiagnostics: statementData.importDiagnostics || liveData.importDiagnostics,
       historyStatus: {
         source: 'gateway+flex',
         complete: statementData.historyStatus?.complete ?? false,

@@ -568,7 +568,7 @@ function analyzeWeeklySummary(
 }
 
 
-function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: number }, baseCurrency: string, instrumentMultipliers: Map<string, number>, openPositions: Position[], cashTransactions: any[] = []): WheelCycleAnalysis {
+function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: number }, baseCurrency: string, instrumentMultipliers: Map<string, number>, openPositions: Position[], cashTransactions: any[] = [], diagnostics?: ParsedData['importDiagnostics']): WheelCycleAnalysis {
     const completedCycles: WheelCycle[] = [];
     const stockLots = new Map<string, { quantity: number; costBasis: number; grossCostBasis: number; acquisitionDate: Date; coveredShares: number; lotIndex: number }[]>();
     const inProgressCycles = new Map<string, Partial<WheelCycle> & { lotIndex: number }>();
@@ -719,6 +719,10 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
 
             } else {
                 console.warn(`Could not find opening trade for assignment of ${trade.Symbol}. Put premium will be incorrect.`);
+                if (diagnostics) {
+                    diagnostics.unmatchedAssignments += 1;
+                    diagnostics.warnings.push(`Could not match opening put sale for assignment ${trade.Symbol}; put premium was estimated as 0.`);
+                }
                 const putPremiumRealized = 0; // Fallback to 0 if no open trade is found
                 const multiplier = instrumentMultipliers.get(trade.Symbol.trim()) || DEFAULT_OPTION_MULTIPLIER;
                 const sharesAcquired = quantity * multiplier;
@@ -1018,6 +1022,20 @@ export function parseIbkrCsv(csvString: string): ParsedData {
         equityHistory: [],
         premiumEfficiency: [],
         closedTradeMetrics: [],
+        importDiagnostics: {
+            source: 'csv',
+            totalRows: lines.length,
+            parsedTrades: 0,
+            parsedPositions: 0,
+            parsedOptionContracts: 0,
+            skippedRows: 0,
+            missingMultipliers: 0,
+            estimatedFxRows: 0,
+            unparsedOptionSymbols: 0,
+            unmatchedAssignments: 0,
+            unlinkedRolls: 0,
+            warnings: [],
+        },
     };
 
      // Process Statement for Period
@@ -1069,6 +1087,7 @@ export function parseIbkrCsv(csvString: string): ParsedData {
             data.exchangeRates[currency] = 1;
             if (currency !== data.accountInfo.baseCurrency) {
                 fxWarnings.push(`Missing FX rate for ${currency}; using 1 ${currency} = 1 ${data.accountInfo.baseCurrency}.`);
+                if (data.importDiagnostics) data.importDiagnostics.estimatedFxRows += 1;
             }
         }
     });
@@ -1078,6 +1097,9 @@ export function parseIbkrCsv(csvString: string): ParsedData {
     // long protective legs carrying their opening debit.
     const premiumMap: { [symbol: string]: number } = {};
     if (sections['Trades']) {
+        if (data.importDiagnostics) {
+            data.importDiagnostics.parsedTrades = sections['Trades'].filter(r => r['DataDiscriminator'] === 'Order').length;
+        }
         const tradeRows = sections['Trades'].filter(
             r =>
                 r['DataDiscriminator'] === 'Order' &&
@@ -1216,13 +1238,24 @@ export function parseIbkrCsv(csvString: string): ParsedData {
             const currency = row['Currency'];
             const exchangeRate = rateFor(data.exchangeRates, currency);
             const { isOption, optionType, strikePrice, expiry, baseSymbol } = parseOptionSymbol(row['Symbol']);
+            const looksLikeOption = /(?:\d{6,8}|[CP]\s*\d|\d+(?:\.\d+)?\s*[CP]\b)/i.test(row['Symbol']);
+            if (!isOption && looksLikeOption && data.importDiagnostics) {
+                data.importDiagnostics.unparsedOptionSymbols += 1;
+                data.importDiagnostics.warnings.push(`Could not parse option contract symbol "${row['Symbol']}".`);
+            }
+            const rawMultiplier = safeParseFloat(row['Mult']);
+            const multiplier = isOption && rawMultiplier <= 0 ? DEFAULT_OPTION_MULTIPLIER : rawMultiplier;
+            if (isOption && rawMultiplier <= 0 && data.importDiagnostics) {
+                data.importDiagnostics.missingMultipliers += 1;
+                data.importDiagnostics.warnings.push(`Missing multiplier for ${row['Symbol']}; using ${DEFAULT_OPTION_MULTIPLIER}.`);
+            }
             
             const position: Position = {
                 assetCategory: assetCategory,
                 symbol: row['Symbol'],
                 baseSymbol,
                 quantity: safeParseFloat(row['Quantity']),
-                multiplier: safeParseFloat(row['Mult']),
+                multiplier,
                 costBasis: safeParseFloat(row['Cost Basis']) * exchangeRate,
                 closePrice: safeParseFloat(row['Close Price']),
                 value: safeParseFloat(row['Value']) * exchangeRate,
@@ -1236,8 +1269,10 @@ export function parseIbkrCsv(csvString: string): ParsedData {
 
             if (position.isOption) {
                 position.collectedPremium = premiumMap[position.symbol] || 0;
+                if (data.importDiagnostics) data.importDiagnostics.parsedOptionContracts += 1;
             }
             data.positions.push(position);
+            if (data.importDiagnostics) data.importDiagnostics.parsedPositions += 1;
         });
     }
 
@@ -1269,7 +1304,8 @@ export function parseIbkrCsv(csvString: string): ParsedData {
             data.accountInfo.baseCurrency,
             instrumentMultipliers,
             data.positions,
-            sections['Cash Transactions'] || sections['Cash Transaction'] || []
+            sections['Cash Transactions'] || sections['Cash Transaction'] || [],
+            data.importDiagnostics
         );
         const openTrades = new Map<string, any[]>();
         const arocTrades: ArocTrade[] = [];

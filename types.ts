@@ -225,6 +225,60 @@ export interface ClosedTradeMetric {
   tradeCount: number;
 }
 
+export type CalculationConfidence = 'exact' | 'reconciled' | 'estimated' | 'incomplete' | 'unsupported';
+
+export interface NormalizedMoney {
+  amount: number;
+  currency: string;
+  amountInBase: number;
+  baseCurrency: string;
+  fxRate: number;
+  fxRateDate?: string;
+  fxRateSource: 'statement' | 'cash-report' | 'gateway' | 'fallback';
+  isEstimatedFx: boolean;
+}
+
+export interface NormalizedContract {
+  symbol: string;
+  conid?: string;
+  baseSymbol: string;
+  assetCategory: string;
+  currency: string;
+  multiplier: number;
+  optionType?: 'P' | 'C';
+  strikePrice?: number;
+  expiry?: string;
+  confidence: CalculationConfidence;
+}
+
+export interface NormalizedTrade {
+  id: string;
+  rawSymbol: string;
+  contract: NormalizedContract;
+  tradeDate: string;
+  reportDate?: string;
+  quantity: number;
+  cashFlow: NormalizedMoney;
+  commission?: NormalizedMoney;
+  code?: string;
+  source: 'csv' | 'flex' | 'gateway';
+}
+
+export interface ImportDiagnostics {
+  source: 'csv' | 'flex' | 'gateway' | 'gateway+flex';
+  totalRows: number;
+  parsedTrades: number;
+  parsedPositions: number;
+  parsedOptionContracts: number;
+  skippedRows: number;
+  missingMultipliers: number;
+  estimatedFxRows: number;
+  unparsedOptionSymbols: number;
+  unmatchedAssignments: number;
+  unlinkedRolls: number;
+  warnings: string[];
+}
+
 export interface ParsedData {
   positions: Position[];
   closedPositions: ClosedPosition[];
@@ -255,4 +309,5 @@ export interface ParsedData {
   equityHistory: EquityHistoryPoint[];
   premiumEfficiency: PremiumEfficiencyRow[];
   closedTradeMetrics: ClosedTradeMetric[];
+  importDiagnostics?: ImportDiagnostics;
 }

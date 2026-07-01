@@ -130,6 +130,24 @@ export const en = {
             title: "Historical data is incomplete",
             description: "Current Gateway data loaded successfully, but historical analytics require a configured Flex Query with the required sections."
         },
+        importQuality: {
+            title: "Import Quality",
+            description: "Source: {{source}}. Shows parsed rows, estimates, and data gaps that can affect calculations.",
+            clean: "Clean",
+            review: "Review",
+            warnings: "Warnings",
+            moreWarnings: "+{{count}} more warnings",
+            metrics: {
+                parsedTrades: "Trades",
+                parsedPositions: "Positions",
+                parsedOptionContracts: "Options",
+                estimatedFxRows: "Est. FX",
+                missingMultipliers: "Missing Mult.",
+                unparsedOptionSymbols: "Unparsed Opt.",
+                unmatchedAssignments: "Unmatched Assign.",
+                unlinkedRolls: "Unlinked Rolls"
+            }
+        },
         arocDetails: {
             title: "Annualized ROC Trade Details",
             description: "Closed short-put trades behind the average annualized return on capital.",

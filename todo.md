@@ -108,6 +108,8 @@ Status: Completed in the Section 2 implementation pass with weighted AROC, sprea
 
 ## 3. Data Import and Normalization
 
+Status: Completed in the Section 3 implementation pass with normalized type contracts, CSV import diagnostics, parser warnings for estimated fields, and an Import Quality dashboard widget.
+
 ### 3.1 Centralize CSV, Flex, and Gateway normalization
 
 - **Files:** `services/csvParser.ts`, `scripts/load_ib_gateway.py`, `App.tsx`, `types.ts`

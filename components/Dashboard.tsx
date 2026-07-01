@@ -30,6 +30,7 @@ import CollapsibleWidget, { SortableWidgetGroup } from './dashboard/CollapsibleW
 import LeapsDeepDive from './dashboard/LeapsDeepDive';
 import CashSettledOptions from './dashboard/CashSettledOptions';
 import ActionRequiredPanel from './dashboard/ActionRequiredPanel';
+import ImportQuality from './dashboard/ImportQuality';
 import { buildEnhancedShortOptions } from '../services/analytics';
 
 const widgetOrder = [
@@ -419,11 +420,15 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
             <SortableWidgetGroup ids={widgetOrder}>
             {dashboardData.shortPuts.length > 0 && <CollapsibleWidget id="action-required" title={t('dashboard.actionRequired.title')} summary={`${dashboardData.shortPuts.length} puts scanned | ${Math.round(thresholds.capture * 100)}% capture`}>
                 <ActionRequiredPanel
-                puts={dashboardData.shortPuts}
+                    puts={dashboardData.shortPuts}
                 thresholds={thresholds}
                 formatInSelectedCurrency={formatInSelectedCurrency}
                 formatCurrency={formatCurrency}
                 />
+            </CollapsibleWidget>}
+
+            {data.importDiagnostics && <CollapsibleWidget id="import-quality" title={t('dashboard.importQuality.title')} summary={`${data.importDiagnostics.source} | ${data.importDiagnostics.warnings.length} warnings`}>
+                <ImportQuality diagnostics={data.importDiagnostics} />
             </CollapsibleWidget>}
             <CollapsibleWidget id="margin-risk" title={t('dashboard.marginRisk.title')} summary={`Available ${formatInSelectedCurrency(data.marginLiquidity.availableFunds)} | Likely assignments ${formatInSelectedCurrency(dashboardData.likelyAssignmentValue)}`}>
                 <MarginLiquidityRisk data={data.marginLiquidity} likelyAssignmentValue={dashboardData.likelyAssignmentValue} formatCurrency={formatInSelectedCurrency} />
