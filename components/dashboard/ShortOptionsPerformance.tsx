@@ -22,6 +22,7 @@ interface ShortOptionsPerformanceProps {
     optionsStrategyMetrics: OptionsStrategyMetrics;
     shortPutIncomeSummary: ShortPutIncomeSummary;
     shortCallIncomeSummary: ShortCallIncomeSummary;
+    overallOptionsRealizedPL: number;
     formatInSelectedCurrency: (value: number) => string;
 }
 
@@ -34,12 +35,15 @@ const ShortOptionsPerformance: React.FC<ShortOptionsPerformanceProps> = ({
     optionsStrategyMetrics,
     shortPutIncomeSummary,
     shortCallIncomeSummary,
+    overallOptionsRealizedPL,
     formatInSelectedCurrency
 }) => {
     const { t, locale } = useLocalization();
     
     const hasSyep = syepIncome !== undefined && syepIncome > 0;
     const hasAroc = arocAnalysis && arocAnalysis.trades.length > 0;
+    const identifiedShortOptionPL = shortPutIncomeSummary.totalRealizedPL + shortCallIncomeSummary.totalRealizedPL;
+    const otherOptionsPL = overallOptionsRealizedPL - identifiedShortOptionPL;
 
     return (
     <div className="bg-brand-surface rounded-lg shadow-lg p-6 mb-8">
@@ -78,6 +82,32 @@ const ShortOptionsPerformance: React.FC<ShortOptionsPerformanceProps> = ({
         {/* Section 2: Realized Income */}
         <div className="mb-8">
             <h3 className="text-xl font-semibold mb-4 text-brand-accent">{t('dashboard.shortOptionsStrategy.realizedIncome.title')}</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-6">
+                <MetricCard
+                    title={t('dashboard.shortOptionsStrategy.realizedIncome.overallOptions.title')}
+                    value={formatInSelectedCurrency(overallOptionsRealizedPL)}
+                    icon={<MoneyIcon />}
+                    isPositive={overallOptionsRealizedPL >= 0}
+                    description={t('dashboard.shortOptionsStrategy.realizedIncome.overallOptions.description')}
+                    tooltip={t('dashboard.shortOptionsStrategy.realizedIncome.overallOptions.tooltip')}
+                />
+                <MetricCard
+                    title={t('dashboard.shortOptionsStrategy.realizedIncome.identifiedShortOptions.title')}
+                    value={formatInSelectedCurrency(identifiedShortOptionPL)}
+                    icon={<CheckCircleIcon />}
+                    isPositive={identifiedShortOptionPL >= 0}
+                    description={t('dashboard.shortOptionsStrategy.realizedIncome.identifiedShortOptions.description')}
+                    tooltip={t('dashboard.shortOptionsStrategy.realizedIncome.identifiedShortOptions.tooltip')}
+                />
+                <MetricCard
+                    title={t('dashboard.shortOptionsStrategy.realizedIncome.otherOptions.title')}
+                    value={formatInSelectedCurrency(otherOptionsPL)}
+                    icon={<InfoIcon />}
+                    isPositive={otherOptionsPL >= 0}
+                    description={t('dashboard.shortOptionsStrategy.realizedIncome.otherOptions.description')}
+                    tooltip={t('dashboard.shortOptionsStrategy.realizedIncome.otherOptions.tooltip')}
+                />
+            </div>
             <div className={`grid grid-cols-1 sm:grid-cols-2 ${hasSyep ? 'lg:grid-cols-2' : 'lg:grid-cols-1'} gap-6`}>
                  <MetricCard
                     title={t('dashboard.shortOptionsStrategy.realizedIncome.winRate.title')}

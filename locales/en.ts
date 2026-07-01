@@ -180,6 +180,8 @@ export const en = {
             shares: "Qty",
             availableShares: "Uncovered",
             coverage: "Coverage",
+            shareCoverage: "Shares / Coverage",
+            uncoveredShort: "uncovered",
             openCalls: "Call Strike",
             average: "Avg.",
             assignmentPrice: "Assigned @",
@@ -344,12 +346,27 @@ export const en = {
             },
             realizedIncome: {
                 title: "Realized Income (All Sources)",
+                overallOptions: {
+                    title: "Overall Options Realized P/L",
+                    description: "From the broker's realized options total.",
+                    tooltip: "This is the full realized P/L for the options asset class, including short options, long options, spread legs, commissions, assignments, and other option activity included by the broker."
+                },
+                identifiedShortOptions: {
+                    title: "Identified Short Option P/L",
+                    description: "Short puts plus short calls identified below.",
+                    tooltip: "This is the subtotal from the closed short put and closed short call cards. It may differ from overall options P/L because long legs, protective options, spreads, and other option trades are outside these two summaries."
+                },
+                otherOptions: {
+                    title: "Other / Unclassified Options P/L",
+                    description: "Overall options P/L minus identified short-option P/L.",
+                    tooltip: "A negative value here usually means losses or debits from long options, protective spread legs, other strategies, or option activity that was not classified as a closed short put/call."
+                },
                 winRate: { title: "Overall Win Rate", description: "{{wins}} wins of {{total}} closed short options.", tooltip: "The percentage of all closed short option trades (puts and calls) that resulted in a realized profit." },
                 syepIncome: { title: "SYEP Income", description: "From the Stock Yield Enhancement Program.", tooltip: "Income earned by allowing IBKR to lend out your fully-paid shares." }
             },
             closedPuts: {
                 title: "Closed Short Puts Deep Dive",
-                totalPL: { title: "Total Realized P/L", description: "From expired or bought-to-close puts.", tooltip: "Total profit from short put options that expired out-of-the-money or were closed by buying them back." },
+                totalPL: { title: "Identified Short Put P/L", description: "From matched expired, assigned, or bought-to-close short puts.", tooltip: "This is the identified short-put subtotal, not total options realized P/L. Protective long legs and other option strategies are reconciled in Other / Unclassified Options P/L." },
                 contractsClosed: { title: "Contracts Closed", description: "Total number of put contracts closed.", tooltip: "The total count of individual short put contracts that either expired worthless or were bought back to close." },
                 avgPL: { title: "Avg. P/L / Contract", description: "Average profit or loss per closed contract.", tooltip: "The average income or loss generated from each closed short put contract." },
                 assignmentRate: { title: "Assignment Rate", description: "Percentage of short puts that were assigned.", tooltip: "Of all closed short puts, this is the percentage that were assigned (i.e., you had to buy the stock)." },
@@ -357,7 +374,7 @@ export const en = {
             },
             closedCalls: {
                 title: "Closed Covered Calls Deep Dive",
-                totalPL: { title: "Total Realized P/L", description: "From expired, assigned, or bought-to-close calls.", tooltip: "Total identified profit or loss from closed short call contracts." },
+                totalPL: { title: "Identified Short Call P/L", description: "From matched expired, assigned, or bought-to-close short calls.", tooltip: "This is the identified short-call subtotal, not total options realized P/L. Other option activity is reconciled above." },
                 contractsClosed: { title: "Contracts Closed", description: "Total short call contracts closed.", tooltip: "Contracts bought back, expired, or assigned where the opening short-call lot was available." },
                 avgPL: { title: "Avg. P/L / Contract", description: "Average result per closed call.", tooltip: "Total realized short-call P/L divided by contracts closed." },
                 winRate: { title: "Win Rate", description: "Profitable or expired call contracts.", tooltip: "Percentage of identified closed short calls with non-negative realized P/L." },
@@ -468,8 +485,11 @@ export const en = {
                     symbol: "Symbol",
                     startDate: "Start Date",
                     netCostBasis: "Net Cost Basis",
+                    lastClose: "Last Close",
+                    costBasisPerShare: "Basis/Sh",
+                    putPremium: "Put Premium",
                     callPremium: "Call Premium",
-                    otherIncome: "Other Income",
+                    otherIncome: "Div/SYEP",
                     currentValue: "Current Value",
                     unrealizedStockPL: "Unrealized Stock P/L",
                     currentTotalPL: "Current Total P/L",
@@ -488,8 +508,9 @@ export const en = {
                     startDate: "Start Date",
                     endDate: "End Date",
                     duration: "Duration (Days)",
+                    putPremium: "Put Premium",
                     callPremium: "Call Premium",
-                    otherIncome: "Other Income",
+                    otherIncome: "Div/SYEP",
                     stockPL: "Stock P/L",
                     totalPL: "Total P/L",
                     returnOnCost: "Return on Cost",
@@ -511,6 +532,9 @@ export const en = {
                 grossCostBasis: "Gross Cost Basis",
                 putPremiumApplied: "Put Premium Applied",
                 netCostBasis: "Net Cost Basis",
+                lastClose: "Last Close",
+                costBasisPerShare: "Basis / Share",
+                otherIncome: "Dividends / SYEP",
                 sale: "Sale",
                 saleText: "{{shares}} shares @ {{price}}",
                 totalSaleProceeds: "Total Sale Proceeds",

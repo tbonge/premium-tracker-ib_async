@@ -203,10 +203,11 @@ function analyzeShortOptionIncome(trades: any[], exchangeRates: { [key: string]:
         // Expired short puts (quantity is positive)
         const isExpired = code.includes('Ep');
         
-        // Bought-to-close short puts (quantity is positive)
+        // Bought-to-close or assigned short options (quantity is positive)
         const isBoughtToClose = code.includes('C') && quantity > 0;
+        const isAssigned = code.includes('A') && quantity > 0;
 
-        return isExpired || isBoughtToClose;
+        return isExpired || isBoughtToClose || isAssigned;
     });
 
     if (closedShortPuts.length === 0) {

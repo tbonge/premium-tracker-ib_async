@@ -13,7 +13,7 @@ interface AssignedPutPositionsProps {
 }
 
 type CoverageStatus = 'fully-covered' | 'partially-covered' | 'needs-call' | 'odd-lot-only';
-type SortKey = 'symbol' | 'startDate' | 'assignmentShares' | 'assignmentPrice' | 'basisAfterPutPremium' | 'wheelBreakevenAfterCalls' | 'currentPrice' | 'daysHeld' | 'availableShares' | 'openCallStrike' | 'coverageStatus' | 'coverageRatio' | 'minimumCallStrike' | 'targetCallStrike' | 'totalCallPremium' | 'currentTotalPL';
+type SortKey = 'symbol' | 'startDate' | 'assignmentShares' | 'assignmentPrice' | 'basisAfterPutPremium' | 'wheelBreakevenAfterCalls' | 'currentPrice' | 'daysHeld' | 'openCallStrike' | 'coverageStatus' | 'minimumCallStrike' | 'targetCallStrike' | 'totalCallPremium' | 'currentTotalPL';
 
 const AssignedPutPositions: React.FC<AssignedPutPositionsProps> = ({ cycles, positions, exchangeRates, formatInSelectedCurrency, formatCurrency }) => {
     const { t } = useLocalization();
@@ -77,15 +77,13 @@ const AssignedPutPositions: React.FC<AssignedPutPositionsProps> = ({ cycles, pos
         <section className="bg-brand-surface rounded-lg shadow-lg p-6 mb-8">
             <h2 className="text-2xl font-bold mb-1">{t('dashboard.assignedPuts.title')}</h2>
             <p className="text-sm text-brand-text-secondary mb-4">{t('dashboard.assignedPuts.description')}</p>
-            <div className="overflow-x-auto">
-                <table className="w-full min-w-[1280px] text-left text-sm">
+            <div>
+                <table className="w-full table-fixed text-left text-xs lg:text-sm">
                     <thead><tr className="border-b border-brand-card">
                         {header('symbol', t('dashboard.assignedPuts.symbol'), false)}
                         {header('coverageStatus', t('dashboard.assignedPuts.status'), false)}
                         {header('startDate', t('dashboard.assignedPuts.assigned'), false)}
-                        {header('assignmentShares', t('dashboard.assignedPuts.shares'))}
-                        {header('availableShares', t('dashboard.assignedPuts.availableShares'))}
-                        {header('coverageRatio', t('dashboard.assignedPuts.coverage'))}
+                        {header('assignmentShares', t('dashboard.assignedPuts.shareCoverage'))}
                         {header('openCallStrike', t('dashboard.assignedPuts.openCalls'))}
                         {header('assignmentPrice', t('dashboard.assignedPuts.assignmentPrice'))}
                         {header('basisAfterPutPremium', t('dashboard.assignedPuts.basisAfterPut'))}
@@ -99,7 +97,7 @@ const AssignedPutPositions: React.FC<AssignedPutPositionsProps> = ({ cycles, pos
                     </tr></thead>
                     <tbody>{rows.map((row, index) => (
                         <tr key={`${row.symbol}-${row.startDate}-${index}`} className="border-b border-brand-card last:border-b-0 hover:bg-brand-card/50">
-                            <td className="p-2 font-mono">{row.symbol}</td>
+                            <td className="p-2 font-mono truncate">{row.symbol}</td>
                             <td className={`p-2 font-semibold ${row.coverageStatus === 'fully-covered' ? 'text-brand-success' : row.coverageStatus === 'needs-call' ? 'text-brand-danger' : 'text-yellow-400'}`}>
                                 <span className="inline-flex items-center gap-2">
                                     {row.coverageStatus === 'fully-covered'
@@ -108,12 +106,16 @@ const AssignedPutPositions: React.FC<AssignedPutPositionsProps> = ({ cycles, pos
                                     {t(`dashboard.assignedPuts.coverageStatuses.${row.coverageStatus}`)}
                                 </span>
                             </td>
-                            <td className="p-2 font-mono">{row.startDate}</td>
-                            <td className="p-2 font-mono text-right">{row.assignmentShares}</td><td className={`p-2 font-mono text-right ${row.availableShares >= 100 ? 'text-brand-danger' : 'text-brand-text-secondary'}`}>{row.availableShares}</td>
-                            <td className="p-2 font-mono text-right">{row.coverageRatio.toLocaleString(undefined, { style: 'percent', maximumFractionDigits: 0 })}</td>
+                            <td className="p-2 font-mono truncate">{row.startDate}</td>
+                            <td className="p-2 text-right">
+                                <div className="font-mono">{row.assignmentShares}</div>
+                                <div className={`text-[11px] ${row.availableShares >= 100 ? 'text-brand-danger' : 'text-brand-text-secondary'}`}>
+                                    {row.availableShares} {t('dashboard.assignedPuts.uncoveredShort')} / {row.coverageRatio.toLocaleString(undefined, { style: 'percent', maximumFractionDigits: 0 })}
+                                </div>
+                            </td>
                             <td className="p-2">
                                 {row.openCallStrike ? (
-                                    <div className="font-mono text-right whitespace-nowrap">
+                                    <div className="font-mono text-right">
                                         {row.hasMultipleCallStrikes ? `${t('dashboard.assignedPuts.average')} ` : ''}
                                         {formatCurrency(row.openCallStrike, row.currency)}
                                     </div>

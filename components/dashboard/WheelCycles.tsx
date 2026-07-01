@@ -12,8 +12,8 @@ interface WheelCyclesProps {
     baseCurrency: string;
 }
 
-type SortKeys = 'symbol' | 'startDate' | 'endDate' | 'durationDays' | 'totalCallPremium' | 'otherIncome' | 'stockPL' | 'totalPL' | 'returnOnCost' | 'annualizedReturn';
-type PendingSortKeys = 'symbol' | 'startDate' | 'netAssignmentCost' | 'totalCallPremium' | 'otherIncome' | 'currentStockValue' | 'unrealizedStockPL' | 'currentTotalPL' | 'annualizedReturn';
+type SortKeys = 'symbol' | 'startDate' | 'endDate' | 'durationDays' | 'initialPutPremium' | 'totalCallPremium' | 'otherIncome' | 'stockPL' | 'totalPL' | 'returnOnCost' | 'annualizedReturn';
+type PendingSortKeys = 'symbol' | 'startDate' | 'lastClosePrice' | 'costBasisPerShare' | 'initialPutPremium' | 'totalCallPremium' | 'unrealizedStockPL' | 'currentTotalPL' | 'annualizedReturn';
 
 
 const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInSelectedCurrency, formatCurrency }) => {
@@ -25,6 +25,17 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
     const [expandedCompletedRow, setExpandedCompletedRow] = useState<number | null>(null);
     const [expandedPendingRow, setExpandedPendingRow] = useState<number | null>(null);
     const [logSort, setLogSort] = useState<{ key: 'date' | 'description' | 'amount'; direction: 'asc' | 'desc' }>({ key: 'date', direction: 'asc' });
+    const pendingDerived = (cycle: PendingWheelCycle) => {
+        const shares = cycle.assignmentShares || 0;
+        const lastClosePrice = shares > 0 ? cycle.currentStockValue / shares : 0;
+        const costBasisPerShare = shares > 0 ? cycle.netAssignmentCost / shares : 0;
+        const start = new Date(`${cycle.startDate}T00:00:00`).getTime();
+        const durationDays = Number.isFinite(start) ? Math.max(1, Math.round((Date.now() - start) / 86400000)) : 1;
+        const annualizedReturn = cycle.annualizedReturn && cycle.annualizedReturn !== 0
+            ? cycle.annualizedReturn
+            : cycle.assignmentCost > 0 ? (cycle.currentTotalPL / cycle.assignmentCost) * (365 / durationDays) : 0;
+        return { lastClosePrice, costBasisPerShare, durationDays, annualizedReturn };
+    };
     const sortedTradeLog = (tradeLog: WheelCycle['tradeLog']) => [...tradeLog].sort((a, b) => {
         const left = a[logSort.key];
         const right = b[logSort.key];
@@ -66,8 +77,14 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
     const sortedPendingCycles = useMemo(() => {
         if (!wheelCycleAnalysis.pendingCycles) return [];
         return [...wheelCycleAnalysis.pendingCycles].sort((a, b) => {
-            let aValue = a[pendingSortConfig.key];
-            let bValue = b[pendingSortConfig.key];
+            const aDerived = pendingDerived(a);
+            const bDerived = pendingDerived(b);
+            let aValue = pendingSortConfig.key in aDerived
+                ? aDerived[pendingSortConfig.key as keyof typeof aDerived]
+                : a[pendingSortConfig.key as keyof PendingWheelCycle];
+            let bValue = pendingSortConfig.key in bDerived
+                ? bDerived[pendingSortConfig.key as keyof typeof bDerived]
+                : b[pendingSortConfig.key as keyof PendingWheelCycle];
 
             if (pendingSortConfig.key === 'startDate') {
                 aValue = new Date(a.startDate).getTime();
@@ -98,25 +115,27 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
     };
 
     const pendingTotals = useMemo(() => {
-        if (!wheelCycleAnalysis.pendingCycles) return { callPremium: 0, otherIncome: 0, unrealizedStockPL: 0, currentTotalPL: 0 };
+        if (!wheelCycleAnalysis.pendingCycles) return { putPremium: 0, callPremium: 0, otherIncome: 0, unrealizedStockPL: 0, currentTotalPL: 0 };
         return wheelCycleAnalysis.pendingCycles.reduce((acc, cycle) => {
+            acc.putPremium += cycle.initialPutPremium;
             acc.callPremium += cycle.totalCallPremium;
             acc.otherIncome += cycle.otherIncome || 0;
             acc.unrealizedStockPL += cycle.unrealizedStockPL;
             acc.currentTotalPL += cycle.currentTotalPL;
             return acc;
-        }, { callPremium: 0, otherIncome: 0, unrealizedStockPL: 0, currentTotalPL: 0 });
+        }, { putPremium: 0, callPremium: 0, otherIncome: 0, unrealizedStockPL: 0, currentTotalPL: 0 });
     }, [wheelCycleAnalysis.pendingCycles]);
 
     const completedTotals = useMemo(() => {
-        if (!wheelCycleAnalysis.completedCycles) return { callPremium: 0, otherIncome: 0, stockPL: 0, totalPL: 0 };
+        if (!wheelCycleAnalysis.completedCycles) return { putPremium: 0, callPremium: 0, otherIncome: 0, stockPL: 0, totalPL: 0 };
         return wheelCycleAnalysis.completedCycles.reduce((acc, cycle) => {
+            acc.putPremium += cycle.initialPutPremium;
             acc.callPremium += cycle.totalCallPremium;
             acc.otherIncome += cycle.otherIncome || 0;
             acc.stockPL += cycle.stockPL;
             acc.totalPL += cycle.totalPL;
             return acc;
-        }, { callPremium: 0, otherIncome: 0, stockPL: 0, totalPL: 0 });
+        }, { putPremium: 0, callPremium: 0, otherIncome: 0, stockPL: 0, totalPL: 0 });
     }, [wheelCycleAnalysis.completedCycles]);
 
     const SortableHeader: React.FC<{ sortKey: SortKeys; headerKey: string; tooltipKey?: string; tooltipAlign?: 'center' | 'left' | 'right'; align?: 'left' | 'right' }> = ({ sortKey, headerKey, tooltipKey, tooltipAlign, align = 'right' }) => (
@@ -152,44 +171,45 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
             {sortedPendingCycles.length > 0 && (
                 <div className="mb-10">
                     <h4 className="text-lg font-semibold mb-2 text-brand-text-secondary">{t('dashboard.wheel.pending.title')}</h4>
-                    <div className="overflow-x-auto pt-12 px-6">
-                        <table className="w-full text-left">
+                    <div className="pt-4">
+                        <table className="w-full table-fixed text-left text-xs lg:text-sm">
                             <thead>
                                 <tr className="border-b border-brand-card">
                                     <SortablePendingHeader sortKey="symbol" headerKey="dashboard.wheel.pending.headers.symbol" align="left" />
                                     <SortablePendingHeader sortKey="startDate" headerKey='dashboard.wheel.pending.headers.startDate' tooltipKey='dashboard.wheel.pending.tooltips.startDate' align="left" tooltipAlign="left" />
-                                    <SortablePendingHeader sortKey="netAssignmentCost" headerKey='dashboard.wheel.pending.headers.netCostBasis' tooltipKey='dashboard.wheel.pending.tooltips.netCostBasis' />
+                                    <SortablePendingHeader sortKey="lastClosePrice" headerKey="dashboard.wheel.pending.headers.lastClose" />
+                                    <SortablePendingHeader sortKey="costBasisPerShare" headerKey="dashboard.wheel.pending.headers.costBasisPerShare" />
+                                    <SortablePendingHeader sortKey="initialPutPremium" headerKey="dashboard.wheel.pending.headers.putPremium" />
                                     <SortablePendingHeader sortKey="totalCallPremium" headerKey="dashboard.wheel.pending.headers.callPremium" />
-                                    <SortablePendingHeader sortKey="otherIncome" headerKey="dashboard.wheel.pending.headers.otherIncome" />
-                                    <SortablePendingHeader sortKey="currentStockValue" headerKey="dashboard.wheel.pending.headers.currentValue" />
                                     <SortablePendingHeader sortKey="unrealizedStockPL" headerKey="dashboard.wheel.pending.headers.unrealizedStockPL" />
                                     <SortablePendingHeader sortKey="currentTotalPL" headerKey='dashboard.wheel.pending.headers.currentTotalPL' tooltipKey='dashboard.wheel.pending.tooltips.currentTotalPL' tooltipAlign="right" />
                                     <SortablePendingHeader sortKey="annualizedReturn" headerKey='dashboard.wheel.pending.headers.annualizedReturn' />
                                 </tr>
                             </thead>
                             <tbody>
-                                {sortedPendingCycles.map((cycle, i) => (
-                                     <React.Fragment key={`pending-${cycle.symbol}-${i}`}>
+                                {sortedPendingCycles.map((cycle, i) => {
+                                    const derived = pendingDerived(cycle);
+                                    return <React.Fragment key={`pending-${cycle.symbol}-${i}`}>
                                         <tr className="border-b border-brand-card last:border-b-0 hover:bg-brand-card/50 cursor-pointer" onClick={() => handlePendingRowClick(i)}>
-                                            <td className="p-2 font-mono">
+                                            <td className="p-2 font-mono truncate">
                                                 <div className="flex items-center">
                                                     {expandedPendingRow === i ? <ChevronUpIcon className="w-4 h-4 mr-2"/> : <ChevronDownIcon className="w-4 h-4 mr-2"/>}
                                                     {cycle.symbol}
                                                 </div>
                                             </td>
-                                            <td className="p-2 font-mono">{cycle.startDate}</td>
-                                            <td className="p-2 font-mono text-right">{formatInSelectedCurrency(cycle.netAssignmentCost)}</td>
+                                            <td className="p-2 font-mono truncate">{cycle.startDate}</td>
+                                            <td className="p-2 font-mono text-right">{formatCurrency(derived.lastClosePrice, cycle.currency)}</td>
+                                            <td className="p-2 font-mono text-right">{formatCurrency(derived.costBasisPerShare, cycle.currency)}</td>
+                                            <td className="p-2 font-mono text-right text-brand-success">{formatInSelectedCurrency(cycle.initialPutPremium)}</td>
                                             <td className="p-2 font-mono text-right text-brand-success">{formatInSelectedCurrency(cycle.totalCallPremium)}</td>
-                                            <td className="p-2 font-mono text-right text-brand-success">{formatInSelectedCurrency(cycle.otherIncome || 0)}</td>
-                                            <td className="p-2 font-mono text-right">{formatInSelectedCurrency(cycle.currentStockValue)}</td>
                                             <td className={`p-2 font-mono text-right ${cycle.unrealizedStockPL >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>
                                                 {formatInSelectedCurrency(cycle.unrealizedStockPL)}
                                             </td>
                                             <td className={`p-2 font-mono font-semibold text-right ${cycle.currentTotalPL >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>
                                                 {formatInSelectedCurrency(cycle.currentTotalPL)}
                                             </td>
-                                            <td className={`p-2 font-mono font-semibold text-right ${(cycle.annualizedReturn || 0) >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>
-                                                {(cycle.annualizedReturn || 0).toLocaleString(locale, { style: 'percent', minimumFractionDigits: 2 })}
+                                            <td className={`p-2 font-mono font-semibold text-right ${derived.annualizedReturn >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>
+                                                {derived.annualizedReturn.toLocaleString(locale, { style: 'percent', minimumFractionDigits: 2 })}
                                             </td>
                                         </tr>
                                          {expandedPendingRow === i && (
@@ -203,6 +223,9 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
                                                                 <p><strong>{t('dashboard.wheel.details.grossCostBasis')}:</strong> {formatInSelectedCurrency(cycle.assignmentCost)}</p>
                                                                 <p className="text-brand-success"><strong>{t('dashboard.wheel.details.putPremiumApplied')}:</strong> -{formatInSelectedCurrency(cycle.initialPutPremium)}</p>
                                                                 <p className="font-semibold border-t border-brand-surface pt-1 mt-1"><strong>{t('dashboard.wheel.details.netCostBasis')}:</strong> {formatInSelectedCurrency(cycle.netAssignmentCost)}</p>
+                                                                <p><strong>{t('dashboard.wheel.details.lastClose')}:</strong> {formatCurrency(derived.lastClosePrice, cycle.currency)}</p>
+                                                                <p><strong>{t('dashboard.wheel.details.costBasisPerShare')}:</strong> {formatCurrency(derived.costBasisPerShare, cycle.currency)}</p>
+                                                                {(cycle.otherIncome || 0) !== 0 && <p className="text-brand-success"><strong>{t('dashboard.wheel.details.otherIncome')}:</strong> {formatInSelectedCurrency(cycle.otherIncome || 0)}</p>}
                                                             </div>
                                                         </div>
                                                         <div>
@@ -232,15 +255,14 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
                                                 </td>
                                             </tr>
                                         )}
-                                     </React.Fragment>
-                                ))}
+                                     </React.Fragment>;
+                                })}
                             </tbody>
                             <tfoot>
                                 <tr className="bg-brand-card/20 font-semibold">
-                                    <td colSpan={3} className="p-2">{t('dashboard.openPositions.total')}</td>
+                                    <td colSpan={4} className="p-2">{t('dashboard.openPositions.total')}</td>
+                                    <td className="p-2 font-mono text-right text-brand-success">{formatInSelectedCurrency(pendingTotals.putPremium)}</td>
                                     <td className="p-2 font-mono text-right text-brand-success">{formatInSelectedCurrency(pendingTotals.callPremium)}</td>
-                                    <td className="p-2 font-mono text-right text-brand-success">{formatInSelectedCurrency(pendingTotals.otherIncome)}</td>
-                                    <td className="p-2"></td>
                                     <td className={`p-2 font-mono text-right ${pendingTotals.unrealizedStockPL >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>
                                         {formatInSelectedCurrency(pendingTotals.unrealizedStockPL)}
                                     </td>
@@ -258,16 +280,16 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
             {sortedCompletedCycles.length > 0 && (
                 <div>
                     <h4 className="text-lg font-semibold mb-2 text-brand-text-secondary">{t('dashboard.wheel.completed.title')}</h4>
-                    <div className="overflow-x-auto pt-12 px-6">
-                        <table className="w-full text-left">
+                    <div className="pt-4">
+                        <table className="w-full table-fixed text-left text-xs lg:text-sm">
                             <thead>
                                 <tr className="border-b border-brand-card">
                                     <SortableHeader sortKey="symbol" headerKey="dashboard.wheel.completed.headers.symbol" align="left" />
                                     <SortableHeader sortKey="startDate" headerKey="dashboard.wheel.completed.headers.startDate" align="left" />
                                     <SortableHeader sortKey="endDate" headerKey='dashboard.wheel.completed.headers.endDate' tooltipKey='dashboard.wheel.completed.tooltips.endDate' />
                                     <SortableHeader sortKey="durationDays" headerKey='dashboard.wheel.completed.headers.duration' tooltipKey='dashboard.wheel.completed.tooltips.duration' />
+                                    <SortableHeader sortKey="initialPutPremium" headerKey="dashboard.wheel.completed.headers.putPremium" />
                                     <SortableHeader sortKey="totalCallPremium" headerKey="dashboard.wheel.completed.headers.callPremium" />
-                                    <SortableHeader sortKey="otherIncome" headerKey="dashboard.wheel.completed.headers.otherIncome" />
                                     <SortableHeader sortKey="stockPL" headerKey="dashboard.wheel.completed.headers.stockPL" />
                                     <SortableHeader sortKey="totalPL" headerKey='dashboard.wheel.completed.headers.totalPL' tooltipKey='dashboard.wheel.completed.tooltips.totalPL' />
                                     <SortableHeader sortKey="returnOnCost" headerKey='dashboard.wheel.completed.headers.returnOnCost' tooltipKey='dashboard.wheel.completed.tooltips.returnOnCost' tooltipAlign="right" />
@@ -278,17 +300,17 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
                                 {sortedCompletedCycles.map((cycle, i) => (
                                     <React.Fragment key={`completed-${cycle.symbol}-${i}`}>
                                         <tr className="border-b border-brand-card last:border-b-0 hover:bg-brand-card/50 cursor-pointer" onClick={() => handleCompletedRowClick(i)}>
-                                            <td className="p-2 font-mono">
+                                            <td className="p-2 font-mono truncate">
                                                 <div className="flex items-center">
                                                     {expandedCompletedRow === i ? <ChevronUpIcon className="w-4 h-4 mr-2"/> : <ChevronDownIcon className="w-4 h-4 mr-2"/>}
                                                     {cycle.symbol}
                                                 </div>
                                             </td>
-                                            <td className="p-2 font-mono">{cycle.startDate}</td>
+                                            <td className="p-2 font-mono truncate">{cycle.startDate}</td>
                                             <td className="p-2 font-mono text-right">{cycle.endDate}</td>
                                             <td className="p-2 font-mono text-right">{cycle.durationDays}</td>
+                                            <td className="p-2 font-mono text-right text-brand-success">{formatInSelectedCurrency(cycle.initialPutPremium)}</td>
                                             <td className="p-2 font-mono text-right text-brand-success">{formatInSelectedCurrency(cycle.totalCallPremium)}</td>
-                                            <td className="p-2 font-mono text-right text-brand-success">{formatInSelectedCurrency(cycle.otherIncome || 0)}</td>
                                             <td className={`p-2 font-mono text-right ${cycle.stockPL >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>
                                                 {formatInSelectedCurrency(cycle.stockPL)}
                                             </td>
@@ -317,6 +339,7 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
                                                                 <p><strong>{t('dashboard.wheel.details.sale')}:</strong> {t('dashboard.wheel.details.saleText', { shares: cycle.assignmentShares, price: formatCurrency(cycle.salePrice, cycle.currency) })}</p>
                                                                 <p><strong>{t('dashboard.wheel.details.totalSaleProceeds')}:</strong> {formatInSelectedCurrency(cycle.saleProceeds)}</p>
                                                                 <p className={`font-semibold ${cycle.stockPL >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}><strong>{t('dashboard.wheel.details.stockPLOnNet')}:</strong> {formatInSelectedCurrency(cycle.stockPL)}</p>
+                                                                {(cycle.otherIncome || 0) !== 0 && <p className="text-brand-success"><strong>{t('dashboard.wheel.details.otherIncome')}:</strong> {formatInSelectedCurrency(cycle.otherIncome || 0)}</p>}
                                                             </div>
                                                         </div>
                                                         <div>
@@ -352,8 +375,8 @@ const WheelCycles: React.FC<WheelCyclesProps> = ({ wheelCycleAnalysis, formatInS
                             <tfoot>
                                 <tr className="bg-brand-card/20 font-semibold">
                                     <td colSpan={4} className="p-2">{t('dashboard.openPositions.total')}</td>
+                                    <td className="p-2 font-mono text-right text-brand-success">{formatInSelectedCurrency(completedTotals.putPremium)}</td>
                                     <td className="p-2 font-mono text-right text-brand-success">{formatInSelectedCurrency(completedTotals.callPremium)}</td>
-                                    <td className="p-2 font-mono text-right text-brand-success">{formatInSelectedCurrency(completedTotals.otherIncome)}</td>
                                     <td className={`p-2 font-mono text-right ${completedTotals.stockPL >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>
                                         {formatInSelectedCurrency(completedTotals.stockPL)}
                                     </td>

@@ -1846,6 +1846,8 @@ def apply_flex_wheel_cycles(data: dict[str, Any], report: Any, option_activity: 
         current_stock_value = current_price * assignment_shares * data["exchangeRates"].get(stock_position["currency"], 1)
         unrealized_stock_pl = current_stock_value - net_assignment_cost
         current_total_pl = unrealized_stock_pl + total_call_premium
+        start_dt = datetime.strptime(assignment_date, "%Y-%m-%d").date() if assignment_date else date.today()
+        duration_days = max(1, (date.today() - start_dt).days)
 
         pending_cycles.append(
             {
@@ -1861,6 +1863,7 @@ def apply_flex_wheel_cycles(data: dict[str, Any], report: Any, option_activity: 
                 "currentStockValue": current_stock_value,
                 "unrealizedStockPL": unrealized_stock_pl,
                 "currentTotalPL": current_total_pl,
+                "annualizedReturn": (current_total_pl / assignment_cost) * (365 / duration_days) if assignment_cost else 0,
                 "tradeLog": trade_log,
             }
         )
@@ -2270,6 +2273,11 @@ def merge_flex_history(live: dict[str, Any], flex: dict[str, Any]) -> dict[str, 
         cycle["currentStockValue"] = current_price * cycle["assignmentShares"] * exchange_rate
         cycle["unrealizedStockPL"] = cycle["currentStockValue"] - cycle["netAssignmentCost"]
         cycle["currentTotalPL"] = cycle["unrealizedStockPL"] + cycle["totalCallPremium"]
+        start = parse_day(cycle.get("startDate"))
+        duration_days = 1
+        if start:
+            duration_days = max(1, (date.today() - datetime.strptime(start, "%Y-%m-%d").date()).days)
+        cycle["annualizedReturn"] = (cycle["currentTotalPL"] / cycle["assignmentCost"]) * (365 / duration_days) if cycle.get("assignmentCost") else 0
 
         open_call_symbols = {
             position["symbol"]
@@ -2289,6 +2297,7 @@ def merge_flex_history(live: dict[str, Any], flex: dict[str, Any]) -> dict[str, 
         if new_call_premium:
             cycle["totalCallPremium"] += new_call_premium
             cycle["currentTotalPL"] += new_call_premium
+            cycle["annualizedReturn"] = (cycle["currentTotalPL"] / cycle["assignmentCost"]) * (365 / duration_days) if cycle.get("assignmentCost") else 0
 
     if not live["positions"] and flex["positions"]:
         live["positions"] = flex["positions"]

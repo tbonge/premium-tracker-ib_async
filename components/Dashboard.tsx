@@ -504,6 +504,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                 optionsStrategyMetrics={data.optionsStrategyMetrics}
                 shortPutIncomeSummary={data.shortPutIncomeSummary}
                 shortCallIncomeSummary={data.shortCallIncomeSummary}
+                overallOptionsRealizedPL={data.plSummary.options.realized}
                 formatInSelectedCurrency={formatInSelectedCurrency}
                 />
             </CollapsibleWidget>
