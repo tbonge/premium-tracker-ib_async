@@ -211,6 +211,8 @@ Status: Completed in the Section 4 implementation pass by expanding Action Requi
 
 ## 5. Dashboard Metric Cleanup
 
+Status: Completed in the Section 5 implementation pass with risk-capital wording, improved premium-capture tooltip semantics, and allocation exposure modes.
+
 ### 5.1 Rename or replace "Return on Max Risk"
 
 - **File:** `components/Dashboard.tsx`

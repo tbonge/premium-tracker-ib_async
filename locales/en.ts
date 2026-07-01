@@ -327,8 +327,8 @@ export const en = {
                 callsTitle: "Short Calls (Open)",
                 totalPremium: { title: "Total Premium", tooltipPuts: "Total premium collected for all open short put positions.", tooltipCalls: "Total premium collected for all open short call positions." },
                 currentValue: { title: "Current Value (Cost to Close)", tooltipPuts: "Current market value of open short put options. This represents the cost to buy them back and close the positions.", tooltipCalls: "Current market value of open short call options. This represents the cost to buy them back and close the positions." },
-                premiumCapture: { title: "Premium Capture", tooltip: "The percentage of the initial premium that has been 'captured' as profit so far. Calculated as (Premium - Current Value) / Premium." },
-                returnOnMaxRisk: { title: "Return on Max Risk", tooltip: "Total premium from open short puts as a percentage of their total potential assignment cost. Shows the potential return on the capital you have at risk." }
+                premiumCapture: { title: "Premium Capture", tooltip: "The percentage of strategy net premium retained so far. Uses the current net close value after paired protective legs where available." },
+                returnOnMaxRisk: { title: "Return on Risk Capital", tooltip: "Total premium from open physical short puts as a percentage of estimated risk capital. Naked puts use assignment exposure; defined spreads use calculated max loss." }
             },
             realizedIncome: {
                 title: "Realized Income (All Sources)",
@@ -354,12 +354,17 @@ export const en = {
         },
         allocations: {
             byTickerTitle: "Portfolio Allocation by Ticker",
-            byTickerTooltip: "Shows allocation by underlying ticker. Note: Stocks and Calls are weighted by market value, while short Puts are weighted by their potential assignment cost (collateral).",
+            byTickerTooltip: "Shows allocation by underlying ticker using the selected exposure mode.",
             byAssetClassTitle: "Asset Class Allocation (by Value)",
             filters: {
                 stocks: "Stocks",
                 puts: "Put Options",
                 calls: "Call Options"
+            },
+            modes: {
+                riskCapital: "Risk Capital",
+                assignmentExposure: "Assignment",
+                marketValue: "Market Value"
             },
             assetClasses: {
                 stocks: "Stocks",

@@ -16,10 +16,12 @@ interface AllocationChartsProps {
     formatInSelectedCurrency: (value: number) => string;
     allocationFilters: { stocks: boolean; puts: boolean; calls: boolean };
     onAllocationFilterChange: (filter: 'stocks' | 'puts' | 'calls') => void;
+    allocationMode: 'marketValue' | 'assignmentExposure' | 'riskCapital';
+    onAllocationModeChange: (mode: 'marketValue' | 'assignmentExposure' | 'riskCapital') => void;
     tooltipFormatter?: (value: number, name: string, props: any) => React.ReactNode;
 }
 
-const AllocationCharts: React.FC<AllocationChartsProps> = ({ portfolioAllocation, assetClassAllocation, formatInSelectedCurrency, allocationFilters, onAllocationFilterChange, tooltipFormatter }) => {
+const AllocationCharts: React.FC<AllocationChartsProps> = ({ portfolioAllocation, assetClassAllocation, formatInSelectedCurrency, allocationFilters, onAllocationFilterChange, allocationMode, onAllocationModeChange, tooltipFormatter }) => {
     const { t } = useLocalization();
 
     const translatedAssetClassAllocation = useMemo(() => assetClassAllocation.map(item => ({
@@ -98,6 +100,21 @@ const AllocationCharts: React.FC<AllocationChartsProps> = ({ portfolioAllocation
                         </button>
                     );
                 })}
+            </div>
+            <div className="flex flex-wrap gap-2 mb-4">
+                {(['riskCapital', 'assignmentExposure', 'marketValue'] as const).map(mode => (
+                    <button
+                        key={mode}
+                        onClick={() => onAllocationModeChange(mode)}
+                        className={`px-3 py-1 text-xs font-semibold rounded-full transition-colors ${
+                            allocationMode === mode
+                                ? 'bg-brand-accent text-white'
+                                : 'bg-brand-card text-brand-text-secondary hover:bg-brand-surface'
+                        }`}
+                    >
+                        {t(`dashboard.allocations.modes.${mode}`)}
+                    </button>
+                ))}
             </div>
             <ResponsiveContainer width="100%" height={300}>
                 <PieChart>

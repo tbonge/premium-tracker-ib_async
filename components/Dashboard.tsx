@@ -53,6 +53,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
     const [selectedCurrency, setSelectedCurrency] = useState<string>(data.exchangeRates.USD ? 'USD' : data.nav.baseCurrency);
     const [allocationFilters, setAllocationFilters] = useState({ stocks: true, puts: true, calls: true });
     const [thresholds, setThresholds] = useState(DEFAULT_DASHBOARD_THRESHOLDS);
+    const [allocationMode, setAllocationMode] = useState<'marketValue' | 'assignmentExposure' | 'riskCapital'>('riskCapital');
 
     const formatCurrency = useMemo(() => (value: number, currency: string) => {
         return new Intl.NumberFormat(locale, { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
@@ -183,11 +184,14 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
              // Exclude positions that don't match any filter type
             if (!isStock && !isPut && !isCall) return acc;
 
-            // For short puts, allocation is based on potential assignment cost (collateral).
-            // For all other positions, it's based on absolute market value.
-            const valueToUse = shortPutRiskMap.has(p.symbol) 
-                ? shortPutRiskMap.get(p.symbol)! 
-                : Math.abs(p.value);
+            const shortPut = shortPuts.find(put => put.symbol === p.symbol);
+            const valueToUse = allocationMode === 'marketValue'
+                ? Math.abs(p.value)
+                : allocationMode === 'assignmentExposure' && shortPut
+                    ? shortPut.assignmentExposure ?? shortPut.assignmentCost
+                    : shortPutRiskMap.has(p.symbol)
+                        ? shortPutRiskMap.get(p.symbol)!
+                        : Math.abs(p.value);
             
             acc[key] = (acc[key] || 0) + valueToUse;
             return acc;
@@ -340,7 +344,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
             likelyShortfallDetails,
             unlikelyShortfallDetails,
         };
-    }, [data, selectedCurrency, allocationFilters, locale, thresholds]);
+    }, [data, selectedCurrency, allocationFilters, locale, thresholds, allocationMode]);
 
     if (view === 'public') {
         return <PublicDashboard data={data} dashboardData={dashboardData} onExit={() => setView('private')} />;
@@ -511,7 +515,9 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                 formatInSelectedCurrency={formatInSelectedCurrency}
                 allocationFilters={allocationFilters}
                 onAllocationFilterChange={handleAllocationFilterChange}
-                />
+                allocationMode={allocationMode}
+                onAllocationModeChange={setAllocationMode}
+            />
             </CollapsibleWidget>
             <CollapsibleWidget id="open-positions" title={t('dashboard.openPositions.title')} summary={`${dashboardData.stockPositions.length} stocks | ${dashboardData.shortPuts.length} puts | ${dashboardData.shortCalls.length} calls`}>
                 <OpenPositions
