@@ -258,6 +258,8 @@ Status: Completed in the Section 5 implementation pass with risk-capital wording
 
 ## 6. Validation and Testing
 
+Status: Completed in the Section 6 implementation pass with dependency-free option calculation fixtures and an `npm test` validator.
+
 ### 6.1 Add fixtures for option strategy calculations
 
 - **Files:** new test fixtures under `tests/` or `services/__tests__/`

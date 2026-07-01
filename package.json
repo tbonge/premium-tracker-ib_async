@@ -7,6 +7,7 @@
     "start": "vite",
     "dev": "vite",
     "build": "vite build",
+    "test": "node scripts/validate_calculation_fixtures.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

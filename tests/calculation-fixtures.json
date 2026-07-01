@@ -1,0 +1,51 @@
+[
+  {
+    "name": "naked short put",
+    "kind": "short-put",
+    "shortStrike": 50,
+    "longStrike": null,
+    "contracts": 1,
+    "multiplier": 100,
+    "netCredit": 120,
+    "expectedMaxLoss": null,
+    "expectedAssignmentExposure": 5000,
+    "expectedBreakeven": 48.8
+  },
+  {
+    "name": "put credit spread",
+    "kind": "put-credit-spread",
+    "shortStrike": 50,
+    "longStrike": 45,
+    "contracts": 2,
+    "multiplier": 100,
+    "netCredit": 180,
+    "expectedMaxLoss": 820,
+    "expectedAssignmentExposure": 10000,
+    "expectedBreakeven": 49.1
+  },
+  {
+    "name": "call credit spread",
+    "kind": "call-credit-spread",
+    "shortStrike": 100,
+    "longStrike": 105,
+    "contracts": 1,
+    "multiplier": 100,
+    "netCredit": 150,
+    "expectedMaxLoss": 350,
+    "expectedAssignmentExposure": null,
+    "expectedBreakeven": 101.5
+  },
+  {
+    "name": "cash settled put spread",
+    "kind": "put-credit-spread",
+    "cashSettled": true,
+    "shortStrike": 5000,
+    "longStrike": 4950,
+    "contracts": 1,
+    "multiplier": 100,
+    "netCredit": 1250,
+    "expectedMaxLoss": 3750,
+    "expectedAssignmentExposure": null,
+    "expectedBreakeven": 4987.5
+  }
+]
