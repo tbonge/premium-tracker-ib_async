@@ -1023,15 +1023,16 @@ export function parseIbkrCsv(csvString: string): ParsedData {
         }
     });
 
-    // Process Trades to get premium for options
+    // Process Trades to get signed opening premium/debit for open options.
+    // Credits are positive, debits are negative; spread analytics depend on
+    // long protective legs carrying their opening debit.
     const premiumMap: { [symbol: string]: number } = {};
     if (sections['Trades']) {
         const tradeRows = sections['Trades'].filter(
             r =>
                 r['DataDiscriminator'] === 'Order' &&
                 r['Asset Category'] === 'Equity and Index Options' &&
-                r['Code']?.includes('O') && // It's an opening trade
-                safeParseFloat(r['Quantity']) < 0 // It's a sale (credit)
+                r['Code']?.includes('O')
         );
 
         tradeRows.forEach(row => {

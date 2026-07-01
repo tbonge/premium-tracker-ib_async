@@ -163,7 +163,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
         const likelyShortfallDetails = createExpiryDetails(likelyAssignments);
         const unlikelyShortfallDetails = createExpiryDetails(unlikelyAssignments);
 
-        const shortPutAssignmentCostMap = new Map(shortPuts.map(p => [p.symbol, p.assignmentCost]));
+        const shortPutRiskMap = new Map(shortPuts.map(p => [p.symbol, p.cashCollateral ?? p.assignmentExposure ?? p.assignmentCost]));
 
         const allocation = data.positions.reduce<Record<string, number>>((acc, p) => {
             const key = p.baseSymbol;
@@ -184,8 +184,8 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
 
             // For short puts, allocation is based on potential assignment cost (collateral).
             // For all other positions, it's based on absolute market value.
-            const valueToUse = shortPutAssignmentCostMap.has(p.symbol) 
-                ? shortPutAssignmentCostMap.get(p.symbol)! 
+            const valueToUse = shortPutRiskMap.has(p.symbol) 
+                ? shortPutRiskMap.get(p.symbol)! 
                 : Math.abs(p.value);
             
             acc[key] = (acc[key] || 0) + valueToUse;
@@ -292,6 +292,8 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
             collectedPremium: shortPuts.reduce((sum, p) => sum + (p.collectedPremium || 0), 0),
             unrealizedPL: shortPuts.reduce((sum, p) => sum + p.unrealizedPL, 0),
             assignmentCost: shortPuts.reduce((sum, p) => sum + p.assignmentCost, 0),
+            cashCollateral: shortPuts.reduce((sum, p) => sum + (p.cashCollateral ?? p.assignmentCost), 0),
+            definedMaxLoss: shortPuts.reduce((sum, p) => sum + (p.maxLoss ?? 0), 0),
         };
 
         const callTotals = {
@@ -302,9 +304,12 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
         const maxAssignmentValue = shortPuts
             .filter(p => !p.isCashSettled)
             .reduce((sum, p) => sum + p.assignmentCost, 0);
-        const returnOnMaxRisk = maxAssignmentValue > 0 ? (shortPutPerformance.premium / maxAssignmentValue * 100) : 0;
-        const shortPutLeverage = data.totalNAV > 0 ? maxAssignmentValue / data.totalNAV : 0;
-        const shortPutLeverageCash = data.nav.cash > 0 ? maxAssignmentValue / data.nav.cash : (maxAssignmentValue > 0 ? Infinity : 0);
+        const shortPutRiskCapital = shortPuts
+            .filter(p => !p.isCashSettled)
+            .reduce((sum, p) => sum + (p.cashCollateral ?? p.assignmentCost), 0);
+        const returnOnMaxRisk = shortPutRiskCapital > 0 ? (shortPutPerformance.premium / shortPutRiskCapital * 100) : 0;
+        const shortPutLeverage = data.totalNAV > 0 ? shortPutRiskCapital / data.totalNAV : 0;
+        const shortPutLeverageCash = data.nav.cash > 0 ? shortPutRiskCapital / data.nav.cash : (shortPutRiskCapital > 0 ? Infinity : 0);
 
 
         return { 

@@ -6,6 +6,8 @@ This TODO is a current backlog based on a read-only review of the project. Older
 
 ## 1. Critical Calculation Correctness
 
+Status: Completed in the Section 1 implementation pass. Remaining refinements should be tracked as new follow-up issues if more broker-specific fixtures reveal edge cases.
+
 ### 1.1 Fix spread premium sign handling and max-loss math
 
 - **Files:** `services/analytics.ts`, `services/csvParser.ts`, `components/dashboard/CashSettledOptions.tsx`, `components/dashboard/ShortPutRisk.tsx`

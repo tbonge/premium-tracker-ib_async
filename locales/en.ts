@@ -150,12 +150,20 @@ export const en = {
             average: "Avg.",
             assignmentPrice: "Assigned @",
             breakeven: "Adj. Basis",
+            basisAfterPut: "Basis After Put",
+            wheelBreakeven: "Wheel Breakeven",
             currentPrice: "Price",
             minStrike: "Min Strike",
             targetStrike: "Target Strike",
             daysHeld: "Days",
             callPremium: "Call Prem.",
-            totalPL: "P/L"
+            totalPL: "P/L",
+            coverageStatuses: {
+                "fully-covered": "Covered",
+                "partially-covered": "Partial",
+                "needs-call": "Needs Call",
+                "odd-lot-only": "Odd Lot"
+            }
         },
         leaps: {
             title: "LEAPS Deep Dive",

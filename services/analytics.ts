@@ -9,8 +9,15 @@ export interface EnhancedShortOption extends Position {
     stockPrice?: number;
     protectiveStrike?: number;
     maxLoss?: number;
+    maxProfit?: number;
+    assignmentCost?: number;
+    assignmentExposure?: number;
+    cashCollateral?: number;
+    settlementRisk?: number;
+    undefinedRisk?: boolean;
     shareAssignmentCost?: number;
     protectedContracts?: number;
+    strategyType?: 'single-short-put' | 'put-credit-spread' | 'call-credit-spread' | 'covered-call' | 'naked-short-call' | 'partially-protected';
     isCashSettled?: boolean;
     expirationOutcome?: 'unknown' | 'expires' | 'shares' | 'defined-loss';
 }
@@ -107,6 +114,11 @@ export const buildEnhancedShortOptions = (
                 ? premiumInPositionCurrency(netPremiumInBase, position, baseCurrency, exchangeRates) / (shortContracts * position.multiplier)
                 : 0;
             const shareAssignmentCost = (position.strikePrice || 0) * shortContracts * position.multiplier * exchangeRate;
+            const protectedContracts = shortContracts - unprotectedContracts;
+            const fullyProtected = unprotectedContracts === 0;
+            const strategyType: EnhancedShortOption['strategyType'] = fullyProtected
+                ? 'put-credit-spread'
+                : protectedContracts > 0 ? 'partially-protected' : 'single-short-put';
             const moneyness = stockPrice !== undefined && position.strikePrice ? (stockPrice - position.strikePrice) / position.strikePrice : undefined;
             const expirationOutcome = stockPrice === undefined || position.strikePrice === undefined
                 ? 'unknown'
@@ -122,12 +134,18 @@ export const buildEnhancedShortOptions = (
                 value: position.value + protectiveValueInBase,
                 unrealizedPL: position.unrealizedPL + protectiveUnrealizedInBase,
                 assignmentCost: shareAssignmentCost,
-                maxLoss: unprotectedContracts === 0 ? strategyRiskInBase : undefined,
+                assignmentExposure: shareAssignmentCost,
+                cashCollateral: fullyProtected ? strategyRiskInBase : shareAssignmentCost,
+                settlementRisk: isCashSettledIndex(position.baseSymbol) ? strategyRiskInBase : shareAssignmentCost,
+                maxLoss: fullyProtected ? strategyRiskInBase : undefined,
+                maxProfit: fullyProtected ? Math.max(0, netPremiumInBase) : undefined,
+                undefinedRisk: false,
                 shareAssignmentCost,
                 expirationOutcome,
                 isCashSettled: isCashSettledIndex(position.baseSymbol),
-                protectedContracts: shortContracts - unprotectedContracts,
+                protectedContracts,
                 protectiveStrike,
+                strategyType,
                 dte: calendarDte(position.expiry, now),
                 moneyness,
                 breakevenPrice: position.strikePrice ? position.strikePrice - premiumPerShare : undefined,
@@ -173,18 +191,30 @@ export const buildEnhancedShortOptions = (
             const premiumPerShare = position.multiplier > 0
                 ? premiumInPositionCurrency(netPremiumInBase, position, baseCurrency, exchangeRates) / (shortContracts * position.multiplier)
                 : 0;
+            const protectedContracts = shortContracts - unprotectedContracts;
+            const fullyProtected = unprotectedContracts === 0;
+            const maxLoss = fullyProtected
+                ? Math.max(0, spreadWidthRiskInOriginalCurrency * exchangeRate - netPremiumInBase)
+                : undefined;
+            const strategyType: EnhancedShortOption['strategyType'] = fullyProtected
+                ? 'call-credit-spread'
+                : protectedContracts > 0 ? 'partially-protected' : 'naked-short-call';
 
             return {
                 ...position,
                 collectedPremium: netPremiumInBase,
                 value: position.value + protectiveValueInBase,
                 unrealizedPL: position.unrealizedPL + protectiveUnrealizedInBase,
-                maxLoss: unprotectedContracts === 0
-                    ? Math.max(0, spreadWidthRiskInOriginalCurrency * exchangeRate - netPremiumInBase)
-                    : undefined,
+                maxLoss,
+                maxProfit: fullyProtected ? Math.max(0, netPremiumInBase) : undefined,
+                assignmentExposure: undefined,
+                cashCollateral: maxLoss,
+                settlementRisk: maxLoss,
+                undefinedRisk: !fullyProtected,
                 isCashSettled: isCashSettledIndex(position.baseSymbol),
-                protectedContracts: shortContracts - unprotectedContracts,
+                protectedContracts,
                 protectiveStrike,
+                strategyType,
                 dte: calendarDte(position.expiry, now),
                 moneyness: stockPrice !== undefined && position.strikePrice ? (stockPrice - position.strikePrice) / position.strikePrice : undefined,
                 breakevenPrice: position.strikePrice ? position.strikePrice + premiumPerShare : undefined,
