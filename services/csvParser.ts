@@ -718,7 +718,6 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                 pendingPutRollLogs.delete(baseSymbol);
 
             } else {
-                console.warn(`Could not find opening trade for assignment of ${trade.Symbol}. Put premium will be incorrect.`);
                 if (diagnostics) {
                     diagnostics.unmatchedAssignments += 1;
                     diagnostics.warnings.push(`Could not match opening put sale for assignment ${trade.Symbol}; put premium was estimated as 0.`);

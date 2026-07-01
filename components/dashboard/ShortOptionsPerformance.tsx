@@ -16,7 +16,7 @@ interface PerformanceData {
 interface ShortOptionsPerformanceProps {
     shortPutPerformance: PerformanceData;
     shortCallPerformance: PerformanceData;
-    returnOnMaxRisk: number;
+    returnOnRiskCapital: number;
     syepIncome?: number;
     arocAnalysis: ArocAnalysis;
     optionsStrategyMetrics: OptionsStrategyMetrics;
@@ -28,7 +28,7 @@ interface ShortOptionsPerformanceProps {
 const ShortOptionsPerformance: React.FC<ShortOptionsPerformanceProps> = ({
     shortPutPerformance,
     shortCallPerformance,
-    returnOnMaxRisk,
+    returnOnRiskCapital,
     syepIncome,
     arocAnalysis,
     optionsStrategyMetrics,
@@ -57,7 +57,7 @@ const ShortOptionsPerformance: React.FC<ShortOptionsPerformanceProps> = ({
                         <MetricCard title={t('dashboard.shortOptionsStrategy.openPositions.totalPremium.title')} value={formatInSelectedCurrency(shortPutPerformance.premium)} icon={<MoneyIcon />} tooltip={t('dashboard.shortOptionsStrategy.openPositions.totalPremium.tooltipPuts')} />
                         <MetricCard title={t('dashboard.shortOptionsStrategy.openPositions.currentValue.title')} value={formatInSelectedCurrency(shortPutPerformance.currentValue)} icon={<InfoIcon />} tooltip={t('dashboard.shortOptionsStrategy.openPositions.currentValue.tooltipPuts')} />
                         <MetricCard title={t('dashboard.shortOptionsStrategy.openPositions.premiumCapture.title')} value={`${shortPutPerformance.capture.toLocaleString(locale, {minimumFractionDigits: 2, maximumFractionDigits: 2})}%`} icon={<CheckCircleIcon />} isPositive={shortPutPerformance.capture > 0} tooltip={t('dashboard.shortOptionsStrategy.openPositions.premiumCapture.tooltip')} />
-                        <MetricCard title={t('dashboard.shortOptionsStrategy.openPositions.returnOnMaxRisk.title')} value={`${returnOnMaxRisk.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`} icon={<TrendingUpIcon />} tooltip={t('dashboard.shortOptionsStrategy.openPositions.returnOnMaxRisk.tooltip')} />
+                        <MetricCard title={t('dashboard.shortOptionsStrategy.openPositions.returnOnMaxRisk.title')} value={`${returnOnRiskCapital.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`} icon={<TrendingUpIcon />} tooltip={t('dashboard.shortOptionsStrategy.openPositions.returnOnMaxRisk.tooltip')} />
                     </div>
                 </div>
                 

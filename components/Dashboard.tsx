@@ -313,7 +313,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
         const shortPutRiskCapital = shortPuts
             .filter(p => !p.isCashSettled)
             .reduce((sum, p) => sum + (p.cashCollateral ?? p.assignmentCost), 0);
-        const returnOnMaxRisk = shortPutRiskCapital > 0 ? (shortPutPerformance.premium / shortPutRiskCapital * 100) : 0;
+        const returnOnRiskCapital = shortPutRiskCapital > 0 ? (shortPutPerformance.premium / shortPutRiskCapital * 100) : 0;
         const shortPutLeverage = data.totalNAV > 0 ? shortPutRiskCapital / data.totalNAV : 0;
         const shortPutLeverageCash = data.nav.cash > 0 ? shortPutRiskCapital / data.nav.cash : (shortPutRiskCapital > 0 ? Infinity : 0);
 
@@ -334,7 +334,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
             stockTotals,
             putTotals,
             callTotals,
-            returnOnMaxRisk,
+            returnOnRiskCapital,
             shortPutLeverage,
             shortPutLeverageCash,
             likelyAssignmentValue,
@@ -498,7 +498,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                 <ShortOptionsPerformance
                 shortPutPerformance={dashboardData.shortPutPerformance}
                 shortCallPerformance={dashboardData.shortCallPerformance}
-                returnOnMaxRisk={dashboardData.returnOnMaxRisk}
+                returnOnRiskCapital={dashboardData.returnOnRiskCapital}
                 syepIncome={data.syepIncome}
                 arocAnalysis={data.arocAnalysis}
                 optionsStrategyMetrics={data.optionsStrategyMetrics}

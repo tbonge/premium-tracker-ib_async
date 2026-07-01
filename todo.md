@@ -317,6 +317,8 @@ Status: Completed in the Section 7 implementation pass as practical scaffolding:
 
 ## 8. Deprecation and Cleanup Candidates
 
+Status: Completed in the Section 8 cleanup pass with misleading internal metric naming removed and parser console warnings replaced by import diagnostics. Remaining cleanup candidates should be treated as future refactors rather than active blockers.
+
 ### 8.1 Deprecate leg-only short-option dashboards after strategy grouping exists
 
 - **Candidates:** Short-put-only and short-call-only summaries that duplicate strategy-level analytics.
