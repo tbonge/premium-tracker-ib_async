@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { AlertTriangleIcon, CheckCircleIcon, RepeatIcon, MoneyIcon } from '../../constants';
-import { Position } from '../../types';
+import { PendingWheelCycle, Position } from '../../types';
 import { useLocalization } from '../../context/LocalizationContext';
 
 interface ShortPutPosition extends Position {
@@ -23,6 +23,9 @@ interface Thresholds {
 
 interface Props {
     puts: ShortPutPosition[];
+    calls?: ShortPutPosition[];
+    assignedCycles?: PendingWheelCycle[];
+    positions?: Position[];
     thresholds: Thresholds;
     formatInSelectedCurrency: (value: number) => string;
     formatCurrency: (value: number, currency: string) => string;
@@ -30,13 +33,20 @@ interface Props {
 
 type ActionRow = {
     priority: number;
+    category: 'put' | 'call' | 'spread' | 'stock';
     action: string;
     reason: string;
-    position: ShortPutPosition;
+    symbol: string;
+    position?: ShortPutPosition;
+    cycle?: PendingWheelCycle;
     metric: string;
+    dte?: number;
+    delta?: number | null;
+    underlyingPrice?: number;
+    cash: number;
 };
 
-const ActionRequiredPanel: React.FC<Props> = ({ puts, thresholds, formatInSelectedCurrency, formatCurrency }) => {
+const ActionRequiredPanel: React.FC<Props> = ({ puts, calls = [], assignedCycles = [], positions = [], thresholds, formatInSelectedCurrency, formatCurrency }) => {
     const { t } = useLocalization();
     const rows = useMemo<ActionRow[]>(() => {
         const output: ActionRow[] = [];
@@ -56,56 +66,143 @@ const ActionRequiredPanel: React.FC<Props> = ({ puts, thresholds, formatInSelect
             if (dte <= thresholds.urgentDte && isItm) {
                 output.push({
                     priority: 1,
+                    category: 'put',
                     action: t('dashboard.actionRequired.actions.rollOrClose'),
                     reason: t('dashboard.actionRequired.reasons.assignment'),
+                    symbol: position.symbol,
                     position,
-                    metric: `${dte} DTE`
+                    metric: `${dte} DTE`,
+                    dte,
+                    delta: position.delta,
+                    underlyingPrice: position.stockPrice,
+                    cash: position.shareAssignmentCost || 0,
                 });
             }
             if (capture >= thresholds.capture && premium > 0) {
                 output.push({
                     priority: 2,
+                    category: 'put',
                     action: t('dashboard.actionRequired.actions.closeForProfit'),
                     reason: t('dashboard.actionRequired.reasons.capture'),
+                    symbol: position.symbol,
                     position,
-                    metric: `${Math.round(capture * 100)}%`
+                    metric: `${Math.round(capture * 100)}%`,
+                    dte,
+                    delta: position.delta,
+                    underlyingPrice: position.stockPrice,
+                    cash: position.shareAssignmentCost || 0,
                 });
             }
             if (dte <= thresholds.rollDte && capture >= Math.min(thresholds.capture, 0.5)) {
                 output.push({
                     priority: 3,
+                    category: 'put',
                     action: t('dashboard.actionRequired.actions.roll'),
                     reason: t('dashboard.actionRequired.reasons.dte'),
+                    symbol: position.symbol,
                     position,
-                    metric: `${dte} DTE`
+                    metric: `${dte} DTE`,
+                    dte,
+                    delta: position.delta,
+                    underlyingPrice: position.stockPrice,
+                    cash: position.shareAssignmentCost || 0,
                 });
             }
             if (absDelta >= thresholds.rollDelta) {
                 output.push({
                     priority: 4,
+                    category: 'put',
                     action: t('dashboard.actionRequired.actions.roll'),
                     reason: t('dashboard.actionRequired.reasons.delta'),
+                    symbol: position.symbol,
                     position,
-                    metric: absDelta.toFixed(2)
+                    metric: absDelta.toFixed(2),
+                    dte,
+                    delta: position.delta,
+                    underlyingPrice: position.stockPrice,
+                    cash: position.shareAssignmentCost || 0,
                 });
             }
             if (lossProgress >= thresholds.spreadLoss) {
                 output.push({
                     priority: 5,
+                    category: 'spread',
                     action: t('dashboard.actionRequired.actions.manageSpread'),
                     reason: t('dashboard.actionRequired.reasons.spreadLoss'),
+                    symbol: position.symbol,
                     position,
-                    metric: `${Math.round(lossProgress * 100)}%`
+                    metric: `${Math.round(lossProgress * 100)}%`,
+                    dte,
+                    delta: position.delta,
+                    underlyingPrice: position.stockPrice,
+                    cash: position.maxLoss || 0,
+                });
+            }
+        });
+
+        calls.forEach(position => {
+            const premium = position.collectedPremium || 0;
+            const closeCost = Math.abs(position.value);
+            const capture = premium > 0 ? (premium - closeCost) / premium : 0;
+            const dte = position.dte ?? Infinity;
+            const absDelta = Math.abs(position.delta || 0);
+            if (capture >= thresholds.capture && premium > 0) {
+                output.push({
+                    priority: 2,
+                    category: 'call',
+                    action: t('dashboard.actionRequired.actions.closeForProfit'),
+                    reason: t('dashboard.actionRequired.reasons.coveredCallCapture'),
+                    symbol: position.symbol,
+                    position,
+                    metric: `${Math.round(capture * 100)}%`,
+                    dte,
+                    delta: position.delta,
+                    underlyingPrice: position.stockPrice,
+                    cash: Math.abs(position.value),
+                });
+            }
+            if (dte <= thresholds.rollDte && absDelta >= Math.min(thresholds.rollDelta, 0.5)) {
+                output.push({
+                    priority: 4,
+                    category: 'call',
+                    action: t('dashboard.actionRequired.actions.rollCall'),
+                    reason: t('dashboard.actionRequired.reasons.coveredCallRisk'),
+                    symbol: position.symbol,
+                    position,
+                    metric: `${dte} DTE`,
+                    dte,
+                    delta: position.delta,
+                    underlyingPrice: position.stockPrice,
+                    cash: Math.abs(position.value),
+                });
+            }
+        });
+
+        assignedCycles.forEach(cycle => {
+            const openCalls = positions.filter(position => position.isOption && position.optionType === 'C' && position.quantity < 0 && position.baseSymbol === cycle.symbol);
+            const coveredShares = openCalls.reduce((sum, position) => sum + Math.abs(position.quantity) * position.multiplier, 0);
+            const uncoveredShares = Math.max(0, cycle.assignmentShares - coveredShares);
+            const uncoveredRoundLots = Math.floor(uncoveredShares / 100);
+            if (uncoveredRoundLots > 0) {
+                output.push({
+                    priority: 2,
+                    category: 'stock',
+                    action: t('dashboard.actionRequired.actions.sellCoveredCall'),
+                    reason: t('dashboard.actionRequired.reasons.uncoveredShares'),
+                    symbol: cycle.symbol,
+                    cycle,
+                    metric: `${uncoveredRoundLots} lots`,
+                    cash: cycle.currentStockValue,
                 });
             }
         });
         const unique = new Map<string, ActionRow>();
         output.sort((a, b) => a.priority - b.priority).forEach(row => {
-            const key = `${row.position.symbol}-${row.action}-${row.reason}`;
+            const key = `${row.symbol}-${row.action}-${row.reason}`;
             if (!unique.has(key)) unique.set(key, row);
         });
         return [...unique.values()].slice(0, 12);
-    }, [puts, thresholds, t]);
+    }, [assignedCycles, calls, positions, puts, thresholds, t]);
 
     const counts = {
         urgent: rows.filter(row => row.priority === 1).length,
@@ -139,6 +236,7 @@ const ActionRequiredPanel: React.FC<Props> = ({ puts, thresholds, formatInSelect
                 <table className="w-full min-w-[920px] text-left text-sm">
                     <thead><tr className="border-b border-brand-card">
                         <th className="p-2">{t('dashboard.actionRequired.headers.action')}</th>
+                        <th className="p-2">{t('dashboard.actionRequired.headers.category')}</th>
                         <th className="p-2">{t('dashboard.actionRequired.headers.contract')}</th>
                         <th className="p-2">{t('dashboard.actionRequired.headers.reason')}</th>
                         <th className="p-2 text-right">{t('dashboard.actionRequired.headers.metric')}</th>
@@ -148,15 +246,16 @@ const ActionRequiredPanel: React.FC<Props> = ({ puts, thresholds, formatInSelect
                         <th className="p-2 text-right">{t('dashboard.actionRequired.headers.cash')}</th>
                     </tr></thead>
                     <tbody>{rows.map((row, index) => (
-                        <tr key={`${row.position.symbol}-${row.action}-${index}`} className="border-b border-brand-card last:border-0 hover:bg-brand-card/50">
+                        <tr key={`${row.symbol}-${row.action}-${index}`} className="border-b border-brand-card last:border-0 hover:bg-brand-card/50">
                             <td className="p-2 font-semibold">{row.action}</td>
-                            <td className="p-2 font-mono">{row.position.symbol}</td>
+                            <td className="p-2">{t(`dashboard.actionRequired.categories.${row.category}`)}</td>
+                            <td className="p-2 font-mono">{row.symbol}</td>
                             <td className="p-2 text-brand-text-secondary">{row.reason}</td>
                             <td className="p-2 text-right font-mono">{row.metric}</td>
-                            <td className="p-2 text-right font-mono">{row.position.dte ?? '-'}</td>
-                            <td className="p-2 text-right font-mono">{typeof row.position.delta === 'number' ? row.position.delta.toFixed(2) : '-'}</td>
-                            <td className="p-2 text-right font-mono">{row.position.stockPrice !== undefined ? formatCurrency(row.position.stockPrice, row.position.currency) : '-'}</td>
-                            <td className="p-2 text-right font-mono">{formatInSelectedCurrency(row.position.shareAssignmentCost || 0)}</td>
+                            <td className="p-2 text-right font-mono">{row.dte ?? '-'}</td>
+                            <td className="p-2 text-right font-mono">{typeof row.delta === 'number' ? row.delta.toFixed(2) : '-'}</td>
+                            <td className="p-2 text-right font-mono">{row.underlyingPrice !== undefined && row.position ? formatCurrency(row.underlyingPrice, row.position.currency) : '-'}</td>
+                            <td className="p-2 text-right font-mono">{formatInSelectedCurrency(row.cash)}</td>
                         </tr>
                     ))}</tbody>
                 </table>

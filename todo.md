@@ -161,6 +161,8 @@ Status: Completed in the Section 3 implementation pass with normalized type cont
 
 ## 4. Decision Dashboard Features
 
+Status: Completed in the Section 4 implementation pass by expanding Action Required into a multi-category workflow for puts, calls, spreads, and assigned stock needing covered calls.
+
 ### 4.1 Upgrade Action Required into the primary workflow panel
 
 - **Files:** `components/dashboard/ActionRequiredPanel.tsx`, `components/Dashboard.tsx`

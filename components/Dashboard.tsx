@@ -421,9 +421,12 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
             {dashboardData.shortPuts.length > 0 && <CollapsibleWidget id="action-required" title={t('dashboard.actionRequired.title')} summary={`${dashboardData.shortPuts.length} puts scanned | ${Math.round(thresholds.capture * 100)}% capture`}>
                 <ActionRequiredPanel
                     puts={dashboardData.shortPuts}
-                thresholds={thresholds}
-                formatInSelectedCurrency={formatInSelectedCurrency}
-                formatCurrency={formatCurrency}
+                    calls={dashboardData.shortCalls}
+                    assignedCycles={pendingCycles}
+                    positions={data.positions}
+                    thresholds={thresholds}
+                    formatInSelectedCurrency={formatInSelectedCurrency}
+                    formatCurrency={formatCurrency}
                 />
             </CollapsibleWidget>}
 

@@ -90,16 +90,20 @@ export const en = {
         },
         actionRequired: {
             title: "Action Required",
-            empty: "No short-put actions match the current thresholds.",
+            empty: "No actions match the current thresholds.",
             summary: { urgent: "urgent assignment", profit: "profit taking", roll: "roll review", spreads: "spread defense" },
-            headers: { action: "Action", contract: "Contract", reason: "Reason", metric: "Metric", underlying: "Underlying", cash: "Assignment Cash" },
-            actions: { rollOrClose: "Roll / Close", closeForProfit: "Close", roll: "Roll", manageSpread: "Defend Spread" },
+            headers: { action: "Action", category: "Type", contract: "Contract", reason: "Reason", metric: "Metric", underlying: "Underlying", cash: "Cash/Risk" },
+            categories: { put: "Put", call: "Call", spread: "Spread", stock: "Stock" },
+            actions: { rollOrClose: "Roll / Close", closeForProfit: "Close", roll: "Roll", manageSpread: "Defend Spread", rollCall: "Roll Call", sellCoveredCall: "Sell Covered Call" },
             reasons: {
                 assignment: "ITM near expiration",
                 capture: "Profit capture threshold met",
                 dte: "Low DTE with meaningful capture",
                 delta: "Delta above roll threshold",
-                spreadLoss: "Spread approaching max loss"
+                spreadLoss: "Spread approaching max loss",
+                coveredCallCapture: "Covered call profit target met",
+                coveredCallRisk: "Covered call assignment/roll risk",
+                uncoveredShares: "Assigned stock has uncovered round lots"
             }
         },
         marginRisk: {
