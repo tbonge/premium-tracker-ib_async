@@ -152,6 +152,18 @@ export const en = {
                 unlinkedRolls: "Unlinked Rolls"
             }
         },
+        scenarioReporting: {
+            title: "Scenarios & Reports",
+            description: "Quick assignment and drawdown stress checks plus lightweight exports for deeper review.",
+            exportWheel: "Wheel CSV",
+            exportClosed: "Closed CSV",
+            scenarios: {
+                likelyAssignments: "Cash After Likely Assign.",
+                allAssignments: "Cash After All Assign.",
+                down10: "NAV -10% Stock Shock",
+                down20: "NAV -20% Stock Shock"
+            }
+        },
         arocDetails: {
             title: "Annualized ROC Trade Details",
             description: "Closed short-put trades behind the average annualized return on capital.",

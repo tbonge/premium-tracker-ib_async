@@ -31,6 +31,7 @@ import LeapsDeepDive from './dashboard/LeapsDeepDive';
 import CashSettledOptions from './dashboard/CashSettledOptions';
 import ActionRequiredPanel from './dashboard/ActionRequiredPanel';
 import ImportQuality from './dashboard/ImportQuality';
+import ScenarioReporting from './dashboard/ScenarioReporting';
 import { buildEnhancedShortOptions } from '../services/analytics';
 
 const widgetOrder = [
@@ -439,6 +440,19 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
             </CollapsibleWidget>}
             <CollapsibleWidget id="margin-risk" title={t('dashboard.marginRisk.title')} summary={`Available ${formatInSelectedCurrency(data.marginLiquidity.availableFunds)} | Likely assignments ${formatInSelectedCurrency(dashboardData.likelyAssignmentValue)}`}>
                 <MarginLiquidityRisk data={data.marginLiquidity} likelyAssignmentValue={dashboardData.likelyAssignmentValue} formatCurrency={formatInSelectedCurrency} />
+            </CollapsibleWidget>
+            <CollapsibleWidget id="scenario-reporting" title={t('dashboard.scenarioReporting.title')} summary={`Stress NAV ${formatInSelectedCurrency(data.totalNAV)} | Exports`}>
+                <ScenarioReporting
+                    totalNAV={data.totalNAV}
+                    cash={dashboardData.cashBalance}
+                    stockValue={dashboardData.stockTotals.value}
+                    optionValue={dashboardData.assetClassAllocation.find(item => item.name === 'Options')?.value || 0}
+                    likelyAssignmentValue={dashboardData.likelyAssignmentValue}
+                    unlikelyAssignmentValue={dashboardData.unlikelyAssignmentValue}
+                    wheelCycleAnalysis={data.wheelCycleAnalysis}
+                    closedPositions={dashboardData.closedPositions}
+                    formatInSelectedCurrency={formatInSelectedCurrency}
+                />
             </CollapsibleWidget>
             <CollapsibleWidget id="pl-summary" title={t('dashboard.plSummary.title')} summary={`Realized ${formatInSelectedCurrency(data.plSummary.total.realized)} | Unrealized ${formatInSelectedCurrency(data.plSummary.total.unrealized)} | Total ${formatInSelectedCurrency(data.plSummary.total.total)}`}>
                 <PLSummary plSummary={data.plSummary} valueFormatter={formatInSelectedCurrency} />

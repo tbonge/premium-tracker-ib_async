@@ -293,6 +293,8 @@ Status: Completed in the Section 6 implementation pass with dependency-free opti
 
 ## 7. Features to Add Later
 
+Status: Completed in the Section 7 implementation pass as practical scaffolding: scenario stress checks and CSV exports were added, with room to extend tax, benchmark, and option-chain enrichment later.
+
 ### 7.1 Tax lot and realized gain support
 
 - Track FIFO/LIFO/HIFO lots, wash-sale warnings, short-term vs long-term gains, and 1099-B reconciliation.
