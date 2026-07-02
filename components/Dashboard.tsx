@@ -7,7 +7,7 @@ import MetricCards from './dashboard/MetricCards';
 import PLSummary from './dashboard/PLSummary';
 import MonthlyPerformanceChart from './dashboard/MonthlyIncomeChart';
 import FeesChart from './dashboard/FeesChart';
-import ShortPutRisk from './dashboard/ShortPutRisk';
+import ShortPutRisk, { AssignmentAtRiskPositions, PutSpreadExpirationOutcomes } from './dashboard/ShortPutRisk';
 import ShortOptionsPerformance from './dashboard/ShortOptionsPerformance';
 import AllocationCharts from './dashboard/AllocationCharts';
 import OpenPositions from './dashboard/OpenPositions';
@@ -35,11 +35,15 @@ import ScenarioReporting from './dashboard/ScenarioReporting';
 import { buildEnhancedShortOptions } from '../services/analytics';
 
 const widgetOrder = [
-    'margin-risk', 'pl-summary', 'nav-history', 'performance', 'fees', 'action-required', 'buy-to-close',
-    'assignment-risk', 'cash-settled', 'expiration-calendar', 'options-performance', 'leaps', 'premium-efficiency',
-    'covered-call-planning', 'allocations', 'open-positions', 'closed-positions',
-    'wheel-summary', 'wheel-timeline', 'wheel-cycles',
+    'pl-summary', 'scenario-reporting', 'margin-risk', 'assignment-risk', 'at-risk-positions',
+    'expiration-calendar', 'action-required', 'buy-to-close', 'covered-call-planning',
+    'wheel-summary', 'wheel-cycles', 'wheel-timeline', 'put-spread-outcomes',
+    'cash-settled', 'options-performance', 'premium-efficiency', 'performance',
+    'nav-history', 'fees', 'allocations', 'open-positions', 'closed-positions',
+    'leaps', 'import-quality',
 ];
+
+const isWheelCall = (position: Position) => (calendarDte(position.expiry) ?? -Infinity) < LEAPS_DTE_THRESHOLD;
 
 interface DashboardProps {
   data: ParsedData;
@@ -358,12 +362,47 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
     const nearestExpiry = calendarPositions.map(position => position.expiry).filter(Boolean).sort()[0];
     const pendingCycles = data.wheelCycleAnalysis.pendingCycles;
     const completedCycles = data.wheelCycleAnalysis.completedCycles;
-    const coveredAssignedCycles = pendingCycles.filter(cycle => {
-        const coveredShares = data.positions
-            .filter(position => position.isOption && position.optionType === 'C' && position.quantity < 0 && position.baseSymbol === cycle.symbol)
-            .reduce((sum, position) => sum + Math.abs(position.quantity) * (position.multiplier || DEFAULT_OPTION_MULTIPLIER), 0);
-        return coveredShares >= cycle.assignmentShares;
-    }).length;
+    const assignedCoverageSummary = (() => {
+        const assignedSharesBySymbol = new Map<string, number>();
+        pendingCycles.forEach(cycle => {
+            assignedSharesBySymbol.set(cycle.symbol, (assignedSharesBySymbol.get(cycle.symbol) || 0) + cycle.assignmentShares);
+        });
+        let covered = 0;
+        assignedSharesBySymbol.forEach((assignedShares, symbol) => {
+            const coveredShares = data.positions
+                .filter(position => position.isOption && position.optionType === 'C' && position.quantity < 0 && position.baseSymbol === symbol && isWheelCall(position))
+                .reduce((sum, position) => sum + Math.abs(position.quantity) * (position.multiplier || DEFAULT_OPTION_MULTIPLIER), 0);
+            if (coveredShares >= assignedShares) covered += 1;
+        });
+        return { total: assignedSharesBySymbol.size, covered };
+    })();
+    const settingsControls = (
+        <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2 xl:grid-cols-5">
+            <label className="space-y-1">
+                <span className="text-brand-text-secondary">{t('dashboard.settings.capture')}</span>
+                <input className="w-full accent-brand-accent" type="range" min="0.5" max="0.95" step="0.05" value={thresholds.capture} onChange={event => setThresholds(prev => ({ ...prev, capture: Number(event.target.value) }))} />
+                <span className="font-mono">{Math.round(thresholds.capture * 100)}%</span>
+            </label>
+            <label className="space-y-1">
+                <span className="text-brand-text-secondary">{t('dashboard.settings.rollDelta')}</span>
+                <input className="w-full accent-brand-accent" type="range" min="0.3" max="0.9" step="0.05" value={thresholds.rollDelta} onChange={event => setThresholds(prev => ({ ...prev, rollDelta: Number(event.target.value) }))} />
+                <span className="font-mono">{thresholds.rollDelta.toFixed(2)}</span>
+            </label>
+            <label className="space-y-1">
+                <span className="text-brand-text-secondary">{t('dashboard.settings.urgentDte')}</span>
+                <input className="w-full bg-brand-card rounded p-2" type="number" min="0" max="30" value={thresholds.urgentDte} onChange={event => setThresholds(prev => ({ ...prev, urgentDte: Number(event.target.value) }))} />
+            </label>
+            <label className="space-y-1">
+                <span className="text-brand-text-secondary">{t('dashboard.settings.rollDte')}</span>
+                <input className="w-full bg-brand-card rounded p-2" type="number" min="1" max="60" value={thresholds.rollDte} onChange={event => setThresholds(prev => ({ ...prev, rollDte: Number(event.target.value) }))} />
+            </label>
+            <label className="space-y-1">
+                <span className="text-brand-text-secondary">{t('dashboard.settings.spreadLoss')}</span>
+                <input className="w-full accent-brand-accent" type="range" min="0.3" max="0.95" step="0.05" value={thresholds.spreadLoss} onChange={event => setThresholds(prev => ({ ...prev, spreadLoss: Number(event.target.value) }))} />
+                <span className="font-mono">{Math.round(thresholds.spreadLoss * 100)}%</span>
+            </label>
+        </div>
+    );
     
     return (
         <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
@@ -376,6 +415,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                 onRefreshData={onRefreshData}
                 isRefreshing={isRefreshing}
                 onPublicViewClick={() => setView('public')}
+                settingsContent={settingsControls}
             />
             <MetricCards 
                 data={data} 
@@ -395,33 +435,6 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                     </div>
                 </div>
             )}
-            <section className="mb-6 border-y border-brand-card py-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4 text-sm">
-                    <label className="space-y-1">
-                        <span className="text-brand-text-secondary">{t('dashboard.settings.capture')}</span>
-                        <input className="w-full accent-brand-accent" type="range" min="0.5" max="0.95" step="0.05" value={thresholds.capture} onChange={event => setThresholds(prev => ({ ...prev, capture: Number(event.target.value) }))} />
-                        <span className="font-mono">{Math.round(thresholds.capture * 100)}%</span>
-                    </label>
-                    <label className="space-y-1">
-                        <span className="text-brand-text-secondary">{t('dashboard.settings.rollDelta')}</span>
-                        <input className="w-full accent-brand-accent" type="range" min="0.3" max="0.9" step="0.05" value={thresholds.rollDelta} onChange={event => setThresholds(prev => ({ ...prev, rollDelta: Number(event.target.value) }))} />
-                        <span className="font-mono">{thresholds.rollDelta.toFixed(2)}</span>
-                    </label>
-                    <label className="space-y-1">
-                        <span className="text-brand-text-secondary">{t('dashboard.settings.urgentDte')}</span>
-                        <input className="w-full bg-brand-card rounded p-2" type="number" min="0" max="30" value={thresholds.urgentDte} onChange={event => setThresholds(prev => ({ ...prev, urgentDte: Number(event.target.value) }))} />
-                    </label>
-                    <label className="space-y-1">
-                        <span className="text-brand-text-secondary">{t('dashboard.settings.rollDte')}</span>
-                        <input className="w-full bg-brand-card rounded p-2" type="number" min="1" max="60" value={thresholds.rollDte} onChange={event => setThresholds(prev => ({ ...prev, rollDte: Number(event.target.value) }))} />
-                    </label>
-                    <label className="space-y-1">
-                        <span className="text-brand-text-secondary">{t('dashboard.settings.spreadLoss')}</span>
-                        <input className="w-full accent-brand-accent" type="range" min="0.3" max="0.95" step="0.05" value={thresholds.spreadLoss} onChange={event => setThresholds(prev => ({ ...prev, spreadLoss: Number(event.target.value) }))} />
-                        <span className="font-mono">{Math.round(thresholds.spreadLoss * 100)}%</span>
-                    </label>
-                </div>
-            </section>
             <SortableWidgetGroup ids={widgetOrder}>
             {dashboardData.shortPuts.length > 0 && <CollapsibleWidget id="action-required" title={t('dashboard.actionRequired.title')} summary={`${dashboardData.shortPuts.length} puts scanned | ${Math.round(thresholds.capture * 100)}% capture`}>
                 <ActionRequiredPanel
@@ -471,7 +484,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                 <FeesChart data={data.weeklySummary} formatInSelectedCurrency={formatInSelectedCurrency} />
             </CollapsibleWidget>}
             {dashboardData.shortPuts.length > 0 && <CollapsibleWidget id="buy-to-close" title={t('dashboard.buyToClose.title')} summary={`${dashboardData.shortPuts.length} open puts | Premium ${formatInSelectedCurrency(dashboardData.putTotals.collectedPremium)}`}>
-                <BuyToCloseCandidates puts={dashboardData.shortPuts} captureThreshold={thresholds.capture} formatInSelectedCurrency={formatInSelectedCurrency} formatCurrency={formatCurrency} />
+                <BuyToCloseCandidates puts={dashboardData.shortPuts} captureThreshold={thresholds.capture} urgentDte={thresholds.urgentDte} formatInSelectedCurrency={formatInSelectedCurrency} formatCurrency={formatCurrency} />
             </CollapsibleWidget>}
             <CollapsibleWidget id="assignment-risk" title={t('dashboard.putRisk.title')} summary={`${dashboardData.likelyAssignments.length} likely | Cash needed ${formatInSelectedCurrency(dashboardData.likelyCashNeeded)}`}>
                 <ShortPutRisk
@@ -483,11 +496,25 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                 likelyAssignments={dashboardData.likelyAssignments}
                 likelyShortfallDetails={dashboardData.likelyShortfallDetails}
                 unlikelyShortfallDetails={dashboardData.unlikelyShortfallDetails}
-                spreadOutcomes={dashboardData.physicalPutSpreads}
                 formatInSelectedCurrency={formatInSelectedCurrency}
                 formatCurrency={formatCurrency}
                 />
             </CollapsibleWidget>
+            {dashboardData.likelyAssignments.length > 0 && <CollapsibleWidget id="at-risk-positions" title={t('dashboard.putRisk.atRiskPositions.title')} summary={`${dashboardData.likelyAssignments.length} positions | Assignment ${formatInSelectedCurrency(dashboardData.likelyAssignmentValue)}`}>
+                <AssignmentAtRiskPositions
+                likelyAssignments={dashboardData.likelyAssignments}
+                likelyAssignmentValue={dashboardData.likelyAssignmentValue}
+                formatInSelectedCurrency={formatInSelectedCurrency}
+                formatCurrency={formatCurrency}
+                />
+            </CollapsibleWidget>}
+            {dashboardData.physicalPutSpreads.length > 0 && <CollapsibleWidget id="put-spread-outcomes" title={t('dashboard.putRisk.spreads.title')} summary={`${dashboardData.physicalPutSpreads.length} spreads | Max loss ${formatInSelectedCurrency(dashboardData.physicalPutSpreads.reduce((sum, position) => sum + (position.maxLoss || 0), 0))}`}>
+                <PutSpreadExpirationOutcomes
+                spreadOutcomes={dashboardData.physicalPutSpreads}
+                formatInSelectedCurrency={formatInSelectedCurrency}
+                formatCurrency={formatCurrency}
+                />
+            </CollapsibleWidget>}
             {dashboardData.cashSettledOptions.length > 0 && <CollapsibleWidget id="cash-settled" title={t('dashboard.cashSettled.title')} summary={`${dashboardData.cashSettledOptions.length} positions | Net premium ${formatInSelectedCurrency(dashboardData.cashSettledOptions.reduce((sum, position) => sum + (position.collectedPremium || 0), 0))}`}>
                 <CashSettledOptions positions={dashboardData.cashSettledOptions} formatInSelectedCurrency={formatInSelectedCurrency} formatCurrency={formatCurrency} />
             </CollapsibleWidget>}
@@ -514,7 +541,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
             {data.premiumEfficiency.length > 0 && <CollapsibleWidget id="premium-efficiency" title={t('dashboard.premiumEfficiency.title')} summary={`${data.premiumEfficiency.length} underlyings | Premium ${formatInSelectedCurrency(data.premiumEfficiency.reduce((sum, row) => sum + row.premiumCollected, 0))}`}>
                 <PremiumEfficiency data={data.premiumEfficiency} formatCurrency={formatInSelectedCurrency} />
             </CollapsibleWidget>}
-            {pendingCycles.length > 0 && <CollapsibleWidget id="covered-call-planning" title={t('dashboard.assignedPuts.title')} summary={`${pendingCycles.length} assigned positions | ${coveredAssignedCycles} covered | ${pendingCycles.length - coveredAssignedCycles} need action`}>
+            {pendingCycles.length > 0 && <CollapsibleWidget id="covered-call-planning" title={t('dashboard.assignedPuts.title')} summary={`${assignedCoverageSummary.total} assigned tickers | ${assignedCoverageSummary.covered} covered | ${assignedCoverageSummary.total - assignedCoverageSummary.covered} need action`}>
                 <AssignedPutPositions
                 cycles={data.wheelCycleAnalysis.pendingCycles}
                 positions={data.positions}
@@ -552,21 +579,23 @@ const Dashboard: React.FC<DashboardProps> = ({ data, onReset, onRefreshData, isR
                 formatInSelectedCurrency={formatInSelectedCurrency}
                 />
             </CollapsibleWidget>}
-            {(pendingCycles.length > 0 || completedCycles.length > 0) && <CollapsibleWidget id="wheel-summary" title={t('dashboard.wheelSummary.title')} summary={`${pendingCycles.length} active | ${completedCycles.length} completed`}>
+            {(pendingCycles.length > 0 || completedCycles.length > 0) && <CollapsibleWidget id="wheel-summary" title={t('dashboard.wheelSummary.title')} summary={`${assignedCoverageSummary.total} active | ${completedCycles.length} completed`}>
                 <WheelStrategySummary
                 wheelCycleAnalysis={data.wheelCycleAnalysis}
                 formatInSelectedCurrency={formatInSelectedCurrency}
                 />
             </CollapsibleWidget>}
-            {(pendingCycles.length > 0 || completedCycles.length > 0) && <CollapsibleWidget id="wheel-timeline" title={t('dashboard.wheelTimeline.title')} summary={`${pendingCycles.length + completedCycles.length} wheel cycles tracked`}>
+            {(pendingCycles.length > 0 || completedCycles.length > 0) && <CollapsibleWidget id="wheel-timeline" title={t('dashboard.wheelTimeline.title')} summary={`${assignedCoverageSummary.total + completedCycles.length} wheel cycles tracked`}>
                 <WheelPositionTimeline analysis={data.wheelCycleAnalysis} formatCurrency={formatInSelectedCurrency} />
             </CollapsibleWidget>}
-            {(pendingCycles.length > 0 || completedCycles.length > 0) && <CollapsibleWidget id="wheel-cycles" title={t('dashboard.wheel.title')} summary={`${pendingCycles.length} pending | ${completedCycles.length} completed`}>
+            {(pendingCycles.length > 0 || completedCycles.length > 0) && <CollapsibleWidget id="wheel-cycles" title={t('dashboard.wheel.title')} summary={`${assignedCoverageSummary.total} pending | ${completedCycles.length} completed`}>
                 <WheelCycles
                 wheelCycleAnalysis={data.wheelCycleAnalysis}
                 formatInSelectedCurrency={formatInSelectedCurrency}
                 formatCurrency={formatCurrency}
                 baseCurrency={data.nav.baseCurrency}
+                positions={data.positions}
+                exchangeRates={data.exchangeRates}
                 />
             </CollapsibleWidget>}
             </SortableWidgetGroup>

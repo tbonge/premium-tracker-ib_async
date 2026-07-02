@@ -25,6 +25,8 @@ interface AssignmentRiskPosition extends Position {
     expirationOutcome?: 'unknown' | 'expires' | 'shares' | 'defined-loss';
 }
 
+type AssignmentSortKey = 'expiry' | 'symbol' | 'quantity' | 'strikePrice' | 'breakevenPrice' | 'stockPrice' | 'delta' | 'dte' | 'collectedPremium' | 'unrealizedPL' | 'assignmentCost' | 'shareAssignmentCost';
+
 interface ShortPutRiskProps {
     cashBalance: number;
     likelyAssignmentValue: number;
@@ -35,6 +37,18 @@ interface ShortPutRiskProps {
     likelyAssignments: AssignmentRiskPosition[];
     likelyShortfallDetails: ShortfallDetails;
     unlikelyShortfallDetails: ShortfallDetails;
+    formatInSelectedCurrency: (value: number) => string;
+    formatCurrency: (value: number, currency: string) => string;
+}
+
+interface AssignmentAtRiskPositionsProps {
+    likelyAssignments: AssignmentRiskPosition[];
+    likelyAssignmentValue: number;
+    formatInSelectedCurrency: (value: number) => string;
+    formatCurrency: (value: number, currency: string) => string;
+}
+
+interface PutSpreadExpirationOutcomesProps {
     spreadOutcomes: AssignmentRiskPosition[];
     formatInSelectedCurrency: (value: number) => string;
     formatCurrency: (value: number, currency: string) => string;
@@ -46,18 +60,11 @@ const ShortPutRisk: React.FC<ShortPutRiskProps> = ({
     unlikelyAssignmentValue,
     likelyCashNeeded,
     unlikelyCashNeeded,
-    likelyAssignments = [],
     likelyShortfallDetails,
     unlikelyShortfallDetails,
-    spreadOutcomes,
     formatInSelectedCurrency,
-    formatCurrency
 }) => {
     const { t } = useLocalization();
-    type SortKey = 'expiry' | 'symbol' | 'quantity' | 'strikePrice' | 'breakevenPrice' | 'stockPrice' | 'delta' | 'dte' | 'collectedPremium' | 'unrealizedPL' | 'assignmentCost' | 'shareAssignmentCost';
-    const sortValue = useCallback((row: AssignmentRiskPosition, key: SortKey) => row[key], []);
-    const { sortedRows: sortedLikelyAssignments, sort, requestSort } = useSortableRows(likelyAssignments, 'expiry' as SortKey, sortValue);
-    const header = (key: SortKey, label: React.ReactNode, right = true) => <SortableHeader column={key} activeColumn={sort.key} direction={sort.direction} onSort={requestSort} align={right ? 'right' : 'left'}>{label}</SortableHeader>;
 
     return (
     <div className="bg-brand-surface rounded-lg shadow-lg p-6 mb-8">
@@ -119,128 +126,138 @@ const ShortPutRisk: React.FC<ShortPutRiskProps> = ({
                 />
             </div>
         </div>
-        {sortedLikelyAssignments.length > 0 && (
-            <div className="mt-8 border-t border-brand-card pt-6">
-                <h3 className="text-lg font-semibold mb-2 text-brand-danger flex items-center">
-                    <WarningIcon className="mr-2" />
-                    {t('dashboard.putRisk.atRiskPositions.title')}
-                </h3>
-                <div className="overflow-x-auto pt-6 px-6">
-                    <table className="w-full text-left">
-                        <thead>
-                            <tr className="border-b border-brand-card">
-                                {header('expiry', t('dashboard.putRisk.atRiskPositions.assignmentDate'), false)}
-                                {header('symbol', t('dashboard.openPositions.puts.symbol'), false)}
-                                {header('quantity', t('dashboard.openPositions.puts.qty'))}
-                                {header('strikePrice', t('dashboard.openPositions.puts.strike'))}
-                                {header('breakevenPrice',
-                                    <Tooltip content={t('dashboard.openPositions.puts.breakevenTooltip')}>
-                                        <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.puts.breakeven')}</span>
-                                    </Tooltip>)}
-                                {header('stockPrice',
-                                    <Tooltip content={t('dashboard.putRisk.atRiskPositions.currentPriceTooltip')}>
-                                        <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.putRisk.atRiskPositions.currentPrice')}</span>
-                                    </Tooltip>)}
-                                {header('dte',
-                                    <Tooltip content={t('dashboard.openPositions.puts.dteTooltip')}>
-                                        <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.puts.dte')}</span>
-                                    </Tooltip>)}
-                                {header('delta', 'Delta')}
-                                {header('collectedPremium',
-                                    <Tooltip content={t('dashboard.openPositions.puts.premiumTooltip')}>
-                                        <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.puts.premium')}</span>
-                                    </Tooltip>)}
-                                {header('unrealizedPL', t('dashboard.openPositions.puts.unrealizedPL'))}
-                                {header('shareAssignmentCost', t('dashboard.putRisk.atRiskPositions.assignmentCash'))}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {sortedLikelyAssignments.map((p, i) => (
-                                    <tr key={`${p.symbol}-${p.expiry || 'unknown'}-${i}`} className="border-b border-brand-card hover:bg-brand-card/50">
-                                        <td className="p-2 font-mono">{p.expiry || t('dashboard.putRisk.atRiskPositions.unknownDate')}</td>
-                                        <td className="p-2 font-mono">
-                                            {p.protectiveStrike !== undefined && p.strikePrice !== undefined
-                                                ? `${p.baseSymbol} ${p.expiry || ''} ${p.strikePrice}/${p.protectiveStrike} ${p.optionType || 'P'}`
-                                                : p.symbol}
-                                        </td>
-                                        <td className="p-2 font-mono text-right">{p.quantity}</td>
-                                        <td className="p-2 font-mono text-right">{p.strikePrice !== undefined ? formatCurrency(p.strikePrice, p.currency) : '-'}</td>
-                                        <td className="p-2 font-mono text-right">
-                                            {p.breakevenPrice !== undefined ? formatCurrency(p.breakevenPrice, p.currency) : '-'}
-                                        </td>
-                                        <td className={`p-2 font-mono text-right ${p.stockPrice !== undefined && p.breakevenPrice !== undefined && p.stockPrice < p.breakevenPrice ? 'text-brand-danger' : ''}`}>
-                                            {p.stockPrice !== undefined ? formatCurrency(p.stockPrice, p.currency) : '-'}
-                                        </td>
-                                        <td className="p-2 font-mono text-right">{p.dte ?? '-'}</td>
-                                        <td className="p-2 font-mono text-right">{typeof p.delta === 'number' && Number.isFinite(p.delta) ? p.delta.toFixed(2) : '-'}</td>
-                                        <td className="p-2 font-mono text-right">{formatInSelectedCurrency(p.collectedPremium || 0)}</td>
-                                        <td className={`p-2 font-mono text-right ${p.unrealizedPL >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>
-                                            {formatInSelectedCurrency(p.unrealizedPL)}
-                                        </td>
-                                        <td className="p-2 font-mono text-right">{formatInSelectedCurrency(p.shareAssignmentCost || 0)}</td>
-                                    </tr>
-                            ))}
-                        </tbody>
-                        <tfoot>
-                            <tr className="bg-brand-card/20 font-semibold">
-                                <td colSpan={8} className="p-2">{t('dashboard.openPositions.total')}</td>
-                                <td className="p-2 font-mono text-right">
-                                    {formatInSelectedCurrency(sortedLikelyAssignments.reduce((sum, p) => sum + (p.collectedPremium || 0), 0))}
-                                </td>
-                                <td className={`p-2 font-mono text-right ${sortedLikelyAssignments.reduce((sum, p) => sum + p.unrealizedPL, 0) >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>
-                                    {formatInSelectedCurrency(sortedLikelyAssignments.reduce((sum, p) => sum + p.unrealizedPL, 0))}
-                                </td>
-                                <td className="p-2 font-mono text-right">{formatInSelectedCurrency(likelyAssignmentValue)}</td>
-                            </tr>
-                        </tfoot>
-                    </table>
-                </div>
-            </div>
-        )}
-        {spreadOutcomes.length > 0 && (
-            <div className="mt-8 border-t border-brand-card pt-6">
-                <h3 className="text-lg font-semibold mb-2">{t('dashboard.putRisk.spreads.title')}</h3>
-                <p className="text-sm text-brand-text-secondary mb-4">{t('dashboard.putRisk.spreads.description')}</p>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left">
-                        <thead><tr className="border-b border-brand-card">
-                            <th className="p-2">{t('dashboard.putRisk.spreads.contract')}</th>
-                            <th className="p-2 text-right">{t('dashboard.putRisk.spreads.currentPrice')}</th>
-                            <th className="p-2 text-right">DTE</th>
-                            <th className="p-2 text-right">Delta</th>
-                            <th className="p-2 text-right">{t('dashboard.putRisk.spreads.netPremium')}</th>
-                            <th className="p-2 text-right">{t('dashboard.putRisk.spreads.outcome')}</th>
-                            <th className="p-2 text-right">{t('dashboard.putRisk.spreads.shares')}</th>
-                            <th className="p-2 text-right">{t('dashboard.putRisk.spreads.assignmentCash')}</th>
-                            <th className="p-2 text-right">{t('dashboard.putRisk.spreads.maxLoss')}</th>
-                        </tr></thead>
-                        <tbody>{spreadOutcomes.map((p, index) => {
-                            const retainedShares = p.expirationOutcome === 'shares' ? Math.abs(p.quantity) * p.multiplier : 0;
-                            const assignmentCash = p.expirationOutcome === 'shares' ? (p.shareAssignmentCost || 0) : 0;
-                            const outcome = p.expirationOutcome === 'shares'
-                                ? t('dashboard.putRisk.spreads.sharesOutcome')
-                                : p.expirationOutcome === 'defined-loss'
-                                    ? t('dashboard.putRisk.spreads.lossOutcome')
-                                    : p.expirationOutcome === 'expires'
-                                        ? t('dashboard.putRisk.spreads.expiresOutcome')
-                                        : t('dashboard.putRisk.spreads.unknownOutcome');
-                            return <tr key={`${p.symbol}-${index}`} className="border-b border-brand-card last:border-0 hover:bg-brand-card/50">
-                                <td className="p-2 font-mono">{`${p.baseSymbol} ${p.expiry || ''} ${p.strikePrice}/${p.protectiveStrike} P`}</td>
-                                <td className="p-2 text-right font-mono">{p.stockPrice !== undefined ? formatCurrency(p.stockPrice, p.currency) : '-'}</td>
-                                <td className="p-2 text-right font-mono">{p.dte ?? '-'}</td>
-                                <td className="p-2 text-right font-mono">{typeof p.delta === 'number' && Number.isFinite(p.delta) ? p.delta.toFixed(3) : '-'}</td>
-                                <td className="p-2 text-right font-mono text-brand-success">{formatInSelectedCurrency(p.collectedPremium || 0)}</td>
-                                <td className={`p-2 text-right font-semibold ${p.expirationOutcome === 'shares' ? 'text-brand-danger' : p.expirationOutcome === 'defined-loss' ? 'text-brand-danger' : 'text-brand-success'}`}>{outcome}</td>
-                                <td className="p-2 text-right font-mono">{retainedShares}</td>
-                                <td className="p-2 text-right font-mono">{formatInSelectedCurrency(assignmentCash)}</td>
-                                <td className="p-2 text-right font-mono">{formatInSelectedCurrency(p.maxLoss || 0)}</td>
-                            </tr>;
-                        })}</tbody>
-                    </table>
-                </div>
-            </div>
-        )}
     </div>
 )};
+
+export const AssignmentAtRiskPositions: React.FC<AssignmentAtRiskPositionsProps> = ({
+    likelyAssignments = [],
+    likelyAssignmentValue,
+    formatInSelectedCurrency,
+    formatCurrency
+}) => {
+    const { t } = useLocalization();
+    const sortValue = useCallback((row: AssignmentRiskPosition, key: AssignmentSortKey) => row[key], []);
+    const { sortedRows, sort, requestSort } = useSortableRows(likelyAssignments, 'expiry' as AssignmentSortKey, sortValue);
+    const header = (key: AssignmentSortKey, label: React.ReactNode, right = true) => <SortableHeader column={key} activeColumn={sort.key} direction={sort.direction} onSort={requestSort} align={right ? 'right' : 'left'}>{label}</SortableHeader>;
+
+    return (
+        <div className="bg-brand-surface rounded-lg shadow-lg p-6">
+            <h2 className="text-2xl font-bold mb-4 text-brand-danger flex items-center">
+                <WarningIcon className="mr-2" />
+                {t('dashboard.putRisk.atRiskPositions.title')}
+            </h2>
+            <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                    <thead>
+                        <tr className="border-b border-brand-card">
+                            {header('expiry', t('dashboard.putRisk.atRiskPositions.assignmentDate'), false)}
+                            {header('symbol', t('dashboard.openPositions.puts.symbol'), false)}
+                            {header('quantity', t('dashboard.openPositions.puts.qty'))}
+                            {header('strikePrice', t('dashboard.openPositions.puts.strike'))}
+                            {header('breakevenPrice',
+                                <Tooltip content={t('dashboard.openPositions.puts.breakevenTooltip')}>
+                                    <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.puts.breakeven')}</span>
+                                </Tooltip>)}
+                            {header('stockPrice',
+                                <Tooltip content={t('dashboard.putRisk.atRiskPositions.currentPriceTooltip')}>
+                                    <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.putRisk.atRiskPositions.currentPrice')}</span>
+                                </Tooltip>)}
+                            {header('dte',
+                                <Tooltip content={t('dashboard.openPositions.puts.dteTooltip')}>
+                                    <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.puts.dte')}</span>
+                                </Tooltip>)}
+                            {header('delta', 'Delta')}
+                            {header('collectedPremium',
+                                <Tooltip content={t('dashboard.openPositions.puts.premiumTooltip')}>
+                                    <span className="border-b border-dotted border-brand-text-secondary cursor-help">{t('dashboard.openPositions.puts.premium')}</span>
+                                </Tooltip>)}
+                            {header('unrealizedPL', t('dashboard.openPositions.puts.unrealizedPL'))}
+                            {header('shareAssignmentCost', t('dashboard.putRisk.atRiskPositions.assignmentCash'))}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {sortedRows.map((p, i) => (
+                            <tr key={`${p.symbol}-${p.expiry || 'unknown'}-${i}`} className="border-b border-brand-card hover:bg-brand-card/50">
+                                <td className="p-2 font-mono">{p.expiry || t('dashboard.putRisk.atRiskPositions.unknownDate')}</td>
+                                <td className="p-2 font-mono">
+                                    {p.protectiveStrike !== undefined && p.strikePrice !== undefined
+                                        ? `${p.baseSymbol} ${p.expiry || ''} ${p.strikePrice}/${p.protectiveStrike} ${p.optionType || 'P'}`
+                                        : p.symbol}
+                                </td>
+                                <td className="p-2 font-mono text-right">{p.quantity}</td>
+                                <td className="p-2 font-mono text-right">{p.strikePrice !== undefined ? formatCurrency(p.strikePrice, p.currency) : '-'}</td>
+                                <td className="p-2 font-mono text-right">{p.breakevenPrice !== undefined ? formatCurrency(p.breakevenPrice, p.currency) : '-'}</td>
+                                <td className={`p-2 font-mono text-right ${p.stockPrice !== undefined && p.breakevenPrice !== undefined && p.stockPrice < p.breakevenPrice ? 'text-brand-danger' : ''}`}>
+                                    {p.stockPrice !== undefined ? formatCurrency(p.stockPrice, p.currency) : '-'}
+                                </td>
+                                <td className="p-2 font-mono text-right">{p.dte ?? '-'}</td>
+                                <td className="p-2 font-mono text-right">{typeof p.delta === 'number' && Number.isFinite(p.delta) ? p.delta.toFixed(2) : '-'}</td>
+                                <td className="p-2 font-mono text-right">{formatInSelectedCurrency(p.collectedPremium || 0)}</td>
+                                <td className={`p-2 font-mono text-right ${p.unrealizedPL >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>{formatInSelectedCurrency(p.unrealizedPL)}</td>
+                                <td className="p-2 font-mono text-right">{formatInSelectedCurrency(p.shareAssignmentCost || 0)}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                    <tfoot>
+                        <tr className="bg-brand-card/20 font-semibold">
+                            <td colSpan={8} className="p-2">{t('dashboard.openPositions.total')}</td>
+                            <td className="p-2 font-mono text-right">{formatInSelectedCurrency(sortedRows.reduce((sum, p) => sum + (p.collectedPremium || 0), 0))}</td>
+                            <td className={`p-2 font-mono text-right ${sortedRows.reduce((sum, p) => sum + p.unrealizedPL, 0) >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>{formatInSelectedCurrency(sortedRows.reduce((sum, p) => sum + p.unrealizedPL, 0))}</td>
+                            <td className="p-2 font-mono text-right">{formatInSelectedCurrency(likelyAssignmentValue)}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+    );
+};
+
+export const PutSpreadExpirationOutcomes: React.FC<PutSpreadExpirationOutcomesProps> = ({ spreadOutcomes, formatInSelectedCurrency, formatCurrency }) => {
+    const { t } = useLocalization();
+
+    return (
+        <div className="bg-brand-surface rounded-lg shadow-lg p-6">
+            <h2 className="text-2xl font-bold mb-2">{t('dashboard.putRisk.spreads.title')}</h2>
+            <p className="text-sm text-brand-text-secondary mb-4">{t('dashboard.putRisk.spreads.description')}</p>
+            <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                    <thead><tr className="border-b border-brand-card">
+                        <th className="p-2">{t('dashboard.putRisk.spreads.contract')}</th>
+                        <th className="p-2 text-right">{t('dashboard.putRisk.spreads.currentPrice')}</th>
+                        <th className="p-2 text-right">DTE</th>
+                        <th className="p-2 text-right">Delta</th>
+                        <th className="p-2 text-right">{t('dashboard.putRisk.spreads.netPremium')}</th>
+                        <th className="p-2 text-right">{t('dashboard.putRisk.spreads.outcome')}</th>
+                        <th className="p-2 text-right">{t('dashboard.putRisk.spreads.shares')}</th>
+                        <th className="p-2 text-right">{t('dashboard.putRisk.spreads.assignmentCash')}</th>
+                        <th className="p-2 text-right">{t('dashboard.putRisk.spreads.maxLoss')}</th>
+                    </tr></thead>
+                    <tbody>{spreadOutcomes.map((p, index) => {
+                        const retainedShares = p.expirationOutcome === 'shares' ? Math.abs(p.quantity) * p.multiplier : 0;
+                        const assignmentCash = p.expirationOutcome === 'shares' ? (p.shareAssignmentCost || 0) : 0;
+                        const outcome = p.expirationOutcome === 'shares'
+                            ? t('dashboard.putRisk.spreads.sharesOutcome')
+                            : p.expirationOutcome === 'defined-loss'
+                                ? t('dashboard.putRisk.spreads.lossOutcome')
+                                : p.expirationOutcome === 'expires'
+                                    ? t('dashboard.putRisk.spreads.expiresOutcome')
+                                    : t('dashboard.putRisk.spreads.unknownOutcome');
+                        return <tr key={`${p.symbol}-${index}`} className="border-b border-brand-card last:border-0 hover:bg-brand-card/50">
+                            <td className="p-2 font-mono">{`${p.baseSymbol} ${p.expiry || ''} ${p.strikePrice}/${p.protectiveStrike} P`}</td>
+                            <td className="p-2 text-right font-mono">{p.stockPrice !== undefined ? formatCurrency(p.stockPrice, p.currency) : '-'}</td>
+                            <td className="p-2 text-right font-mono">{p.dte ?? '-'}</td>
+                            <td className="p-2 text-right font-mono">{typeof p.delta === 'number' && Number.isFinite(p.delta) ? p.delta.toFixed(3) : '-'}</td>
+                            <td className="p-2 text-right font-mono text-brand-success">{formatInSelectedCurrency(p.collectedPremium || 0)}</td>
+                            <td className={`p-2 text-right font-semibold ${p.expirationOutcome === 'shares' ? 'text-brand-danger' : p.expirationOutcome === 'defined-loss' ? 'text-brand-danger' : 'text-brand-success'}`}>{outcome}</td>
+                            <td className="p-2 text-right font-mono">{retainedShares}</td>
+                            <td className="p-2 text-right font-mono">{formatInSelectedCurrency(assignmentCash)}</td>
+                            <td className="p-2 text-right font-mono">{formatInSelectedCurrency(p.maxLoss || 0)}</td>
+                        </tr>;
+                    })}</tbody>
+                </table>
+            </div>
+        </div>
+    );
+};
 
 export default ShortPutRisk;

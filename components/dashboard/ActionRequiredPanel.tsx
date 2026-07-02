@@ -1,7 +1,8 @@
 import React, { useMemo } from 'react';
-import { AlertTriangleIcon, CheckCircleIcon, RepeatIcon, MoneyIcon } from '../../constants';
+import { AlertTriangleIcon, CheckCircleIcon, DEFAULT_OPTION_MULTIPLIER, LEAPS_DTE_THRESHOLD, RepeatIcon, MoneyIcon } from '../../constants';
 import { PendingWheelCycle, Position } from '../../types';
 import { useLocalization } from '../../context/LocalizationContext';
+import { calendarDte } from '../../utils/dates';
 
 interface ShortPutPosition extends Position {
     dte?: number;
@@ -46,6 +47,9 @@ type ActionRow = {
     cash: number;
 };
 
+const tinyCloseCost = (closeCost: number, premium: number) => closeCost <= Math.max(5, premium * 0.05);
+const isWheelCall = (position: Position) => (calendarDte(position.expiry) ?? -Infinity) < LEAPS_DTE_THRESHOLD;
+
 const ActionRequiredPanel: React.FC<Props> = ({ puts, calls = [], assignedCycles = [], positions = [], thresholds, formatInSelectedCurrency, formatCurrency }) => {
     const { t } = useLocalization();
     const rows = useMemo<ActionRow[]>(() => {
@@ -57,6 +61,7 @@ const ActionRequiredPanel: React.FC<Props> = ({ puts, calls = [], assignedCycles
             const absDelta = Math.abs(position.delta || 0);
             const dte = position.dte ?? Infinity;
             const isItm = (position.moneyness ?? 1) < 0;
+            const letExpireOtm = !isItm && dte <= thresholds.urgentDte && capture >= thresholds.capture && tinyCloseCost(closeCost, premium);
             const protectedContracts = position.protectedContracts || 0;
             const isSpread = position.maxLoss !== undefined && protectedContracts >= Math.abs(position.quantity);
             const lossProgress = isSpread && position.maxLoss && position.maxLoss > 0
@@ -78,7 +83,7 @@ const ActionRequiredPanel: React.FC<Props> = ({ puts, calls = [], assignedCycles
                     cash: position.shareAssignmentCost || 0,
                 });
             }
-            if (capture >= thresholds.capture && premium > 0) {
+            if (capture >= thresholds.capture && premium > 0 && !letExpireOtm) {
                 output.push({
                     priority: 2,
                     category: 'put',
@@ -93,7 +98,7 @@ const ActionRequiredPanel: React.FC<Props> = ({ puts, calls = [], assignedCycles
                     cash: position.shareAssignmentCost || 0,
                 });
             }
-            if (dte <= thresholds.rollDte && capture >= Math.min(thresholds.capture, 0.5)) {
+            if (dte <= thresholds.rollDte && capture >= Math.min(thresholds.capture, 0.5) && !letExpireOtm) {
                 output.push({
                     priority: 3,
                     category: 'put',
@@ -146,7 +151,9 @@ const ActionRequiredPanel: React.FC<Props> = ({ puts, calls = [], assignedCycles
             const capture = premium > 0 ? (premium - closeCost) / premium : 0;
             const dte = position.dte ?? Infinity;
             const absDelta = Math.abs(position.delta || 0);
-            if (capture >= thresholds.capture && premium > 0) {
+            const isOtm = (position.moneyness ?? 0) < 0;
+            const letExpireOtm = isOtm && dte <= thresholds.urgentDte && capture >= thresholds.capture && tinyCloseCost(closeCost, premium);
+            if (capture >= thresholds.capture && premium > 0 && !letExpireOtm) {
                 output.push({
                     priority: 2,
                     category: 'call',
@@ -161,7 +168,7 @@ const ActionRequiredPanel: React.FC<Props> = ({ puts, calls = [], assignedCycles
                     cash: Math.abs(position.value),
                 });
             }
-            if (dte <= thresholds.rollDte && absDelta >= Math.min(thresholds.rollDelta, 0.5)) {
+            if (dte <= thresholds.rollDte && absDelta >= Math.min(thresholds.rollDelta, 0.5) && !letExpireOtm) {
                 output.push({
                     priority: 4,
                     category: 'call',
@@ -178,9 +185,28 @@ const ActionRequiredPanel: React.FC<Props> = ({ puts, calls = [], assignedCycles
             }
         });
 
+        const assignedBySymbol = new Map<string, PendingWheelCycle>();
         assignedCycles.forEach(cycle => {
-            const openCalls = positions.filter(position => position.isOption && position.optionType === 'C' && position.quantity < 0 && position.baseSymbol === cycle.symbol);
-            const coveredShares = openCalls.reduce((sum, position) => sum + Math.abs(position.quantity) * position.multiplier, 0);
+            const existing = assignedBySymbol.get(cycle.symbol);
+            if (!existing) {
+                assignedBySymbol.set(cycle.symbol, { ...cycle, tradeLog: [...cycle.tradeLog] });
+                return;
+            }
+            existing.assignmentShares += cycle.assignmentShares;
+            existing.currentStockValue += cycle.currentStockValue;
+            existing.assignmentCost += cycle.assignmentCost;
+            existing.netAssignmentCost += cycle.netAssignmentCost;
+            existing.initialPutPremium += cycle.initialPutPremium;
+            existing.totalCallPremium += cycle.totalCallPremium;
+            existing.currentTotalPL += cycle.currentTotalPL;
+            existing.unrealizedStockPL += cycle.unrealizedStockPL;
+            existing.otherIncome = (existing.otherIncome || 0) + (cycle.otherIncome || 0);
+            existing.startDate = existing.startDate < cycle.startDate ? existing.startDate : cycle.startDate;
+        });
+
+        assignedBySymbol.forEach(cycle => {
+            const openCalls = positions.filter(position => position.isOption && position.optionType === 'C' && position.quantity < 0 && position.baseSymbol === cycle.symbol && isWheelCall(position));
+            const coveredShares = openCalls.reduce((sum, position) => sum + Math.abs(position.quantity) * (position.multiplier || DEFAULT_OPTION_MULTIPLIER), 0);
             const uncoveredShares = Math.max(0, cycle.assignmentShares - coveredShares);
             const uncoveredRoundLots = Math.floor(uncoveredShares / 100);
             if (uncoveredRoundLots > 0) {

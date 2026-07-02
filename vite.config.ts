@@ -18,6 +18,24 @@ export default defineConfig(({ mode }) => {
     plugins: [{
       name: 'ib-gateway-loader',
       configureServer(server) {
+        const readJsonBody = (req: any) => new Promise<Record<string, string>>(resolve => {
+          let body = '';
+          req.on('data', (chunk: Buffer) => {
+            body += chunk.toString();
+          });
+          req.on('end', () => {
+            if (!body) {
+              resolve({});
+              return;
+            }
+            try {
+              resolve(JSON.parse(body));
+            } catch {
+              resolve({});
+            }
+          });
+        });
+
         const runPython = (args: string[], res: any) => {
           const scriptPath = path.resolve(__dirname, 'scripts', 'load_ib_gateway.py');
           const pythonCommand = env.IB_PYTHON || process.env.IB_PYTHON || 'python';
@@ -62,7 +80,7 @@ export default defineConfig(({ mode }) => {
           });
         };
 
-        server.middlewares.use('/api/ib/live', (req, res) => {
+        server.middlewares.use('/api/ib/live', async (req, res) => {
           if (req.method !== 'POST') {
             res.statusCode = 405;
             res.setHeader('Content-Type', 'application/json');
@@ -70,6 +88,9 @@ export default defineConfig(({ mode }) => {
             return;
           }
 
+          const body = await readJsonBody(req);
+          const flexToken = body.flexToken || env.IB_FLEX_TOKEN || process.env.IB_FLEX_TOKEN || '';
+          const flexQueryId = body.flexQueryId || env.IB_FLEX_QUERY_ID || process.env.IB_FLEX_QUERY_ID || '';
           const scriptPath = path.resolve(__dirname, 'scripts', 'load_ib_gateway.py');
           runPython([
             scriptPath,
@@ -77,8 +98,8 @@ export default defineConfig(({ mode }) => {
             '--port', env.IB_GATEWAY_PORT || process.env.IB_GATEWAY_PORT || '4001',
             '--client-id', env.IB_CLIENT_ID || process.env.IB_CLIENT_ID || '77',
             '--readonly',
-            '--flex-token', env.IB_FLEX_TOKEN || process.env.IB_FLEX_TOKEN || '',
-            '--flex-query-id', env.IB_FLEX_QUERY_ID || process.env.IB_FLEX_QUERY_ID || ''
+            '--flex-token', flexToken,
+            '--flex-query-id', flexQueryId
           ], res);
         });
 
@@ -100,7 +121,7 @@ export default defineConfig(({ mode }) => {
           ], res);
         });
 
-        server.middlewares.use('/api/ib/flex', (req, res) => {
+        server.middlewares.use('/api/ib/flex', async (req, res) => {
           if (req.method !== 'POST') {
             res.statusCode = 405;
             res.setHeader('Content-Type', 'application/json');
@@ -108,12 +129,13 @@ export default defineConfig(({ mode }) => {
             return;
           }
 
-          const flexToken = env.IB_FLEX_TOKEN || process.env.IB_FLEX_TOKEN || '';
-          const flexQueryId = env.IB_FLEX_QUERY_ID || process.env.IB_FLEX_QUERY_ID || '';
+          const body = await readJsonBody(req);
+          const flexToken = body.flexToken || env.IB_FLEX_TOKEN || process.env.IB_FLEX_TOKEN || '';
+          const flexQueryId = body.flexQueryId || env.IB_FLEX_QUERY_ID || process.env.IB_FLEX_QUERY_ID || '';
           if (!flexToken || !flexQueryId) {
             res.statusCode = 400;
             res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ error: 'Set both IB_FLEX_TOKEN and IB_FLEX_QUERY_ID before starting Vite.' }));
+            res.end(JSON.stringify({ error: 'Enter both Flex Token and Flex Query ID, or set IB_FLEX_TOKEN and IB_FLEX_QUERY_ID before starting Vite.' }));
             return;
           }
 

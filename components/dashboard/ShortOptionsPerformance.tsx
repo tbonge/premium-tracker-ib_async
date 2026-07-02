@@ -26,6 +26,8 @@ interface ShortOptionsPerformanceProps {
     formatInSelectedCurrency: (value: number) => string;
 }
 
+const closureKeys = ['assigned', 'rolled', 'expired', 'boughtToClose'] as const;
+
 const ShortOptionsPerformance: React.FC<ShortOptionsPerformanceProps> = ({
     shortPutPerformance,
     shortCallPerformance,
@@ -44,6 +46,40 @@ const ShortOptionsPerformance: React.FC<ShortOptionsPerformanceProps> = ({
     const hasAroc = arocAnalysis && arocAnalysis.trades.length > 0;
     const identifiedShortOptionPL = shortPutIncomeSummary.totalRealizedPL + shortCallIncomeSummary.totalRealizedPL;
     const otherOptionsPL = overallOptionsRealizedPL - identifiedShortOptionPL;
+    const renderClosureBreakdown = (
+        breakdown: ShortPutIncomeSummary['closureBreakdown'],
+        totalContracts: number
+    ) => {
+        const values = breakdown || { assigned: 0, expired: 0, rolled: 0, boughtToClose: 0 };
+        const total = totalContracts || closureKeys.reduce((sum, key) => sum + (values[key] || 0), 0);
+        if (!total) return null;
+
+        return (
+            <div className="mt-5 overflow-x-auto">
+                <table className="w-full text-sm">
+                    <thead>
+                        <tr className="border-b border-brand-card text-brand-text-secondary">
+                            <th className="p-2 text-left font-semibold">{t('dashboard.shortOptionsStrategy.closureBreakdown.method')}</th>
+                            <th className="p-2 text-right font-semibold">{t('dashboard.shortOptionsStrategy.closureBreakdown.contracts')}</th>
+                            <th className="p-2 text-right font-semibold">{t('dashboard.shortOptionsStrategy.closureBreakdown.share')}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {closureKeys.map(key => {
+                            const contracts = values[key] || 0;
+                            return (
+                                <tr key={key} className="border-b border-brand-card/70 last:border-b-0">
+                                    <td className="p-2">{t(`dashboard.shortOptionsStrategy.closureBreakdown.${key}`)}</td>
+                                    <td className="p-2 text-right font-mono">{contracts.toLocaleString(locale)}</td>
+                                    <td className="p-2 text-right font-mono">{(contracts / total).toLocaleString(locale, { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        );
+    };
 
     return (
     <div className="bg-brand-surface rounded-lg shadow-lg p-6 mb-8">
@@ -178,6 +214,7 @@ const ShortOptionsPerformance: React.FC<ShortOptionsPerformanceProps> = ({
                         />
                     )}
                 </div>
+                {renderClosureBreakdown(shortPutIncomeSummary.closureBreakdown, shortPutIncomeSummary.numberOfContracts)}
             </div>
         </>
         )}
@@ -193,6 +230,7 @@ const ShortOptionsPerformance: React.FC<ShortOptionsPerformanceProps> = ({
                     <MetricCard title={t('dashboard.shortOptionsStrategy.closedCalls.winRate.title')} value={`${(shortCallIncomeSummary.winRate * 100).toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`} icon={<TrendingUpIcon />} isPositive={shortCallIncomeSummary.winRate >= 0.5} description={t('dashboard.shortOptionsStrategy.closedCalls.winRate.description')} tooltip={t('dashboard.shortOptionsStrategy.closedCalls.winRate.tooltip')} />
                     <MetricCard title={t('dashboard.shortOptionsStrategy.closedCalls.assignmentRate.title')} value={`${(shortCallIncomeSummary.assignmentRate * 100).toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`} icon={<RepeatIcon />} description={t('dashboard.shortOptionsStrategy.closedCalls.assignmentRate.description')} tooltip={t('dashboard.shortOptionsStrategy.closedCalls.assignmentRate.tooltip')} />
                 </div>
+                {renderClosureBreakdown(shortCallIncomeSummary.closureBreakdown, shortCallIncomeSummary.numberOfContracts)}
             </div>
         </>
         )}

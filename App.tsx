@@ -3,10 +3,14 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { ClosedPosition, DailyOptionsSummary, MonthlySummary, ParsedData, WeeklySummary } from './types';
 import { parseIbkrCsv } from './services/csvParser';
 import FileUpload from './components/FileUpload';
+import { FlexCredentials } from './components/FileUpload';
 import Dashboard from './components/Dashboard';
 import LabsDashboard from './components/LabsDashboard';
-import { LoaderIcon, AlertTriangleIcon } from './constants';
+import { LoaderIcon, AlertTriangleIcon, LEAPS_DTE_THRESHOLD } from './constants';
 import { useLocalization } from './context/LocalizationContext';
+import { calendarDte } from './utils/dates';
+
+const isWheelExpiry = (expiry?: string) => (calendarDte(expiry) ?? -Infinity) < LEAPS_DTE_THRESHOLD;
 
 const parseDateKey = (dateKey: string): Date => {
   const match = dateKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -52,6 +56,8 @@ type SessionOptionSale = {
   symbol?: string;
   baseSymbol?: string;
   optionType?: 'P' | 'C' | string;
+  expiry?: string;
+  action?: 'buy' | 'sell' | string;
   premium?: number;
   premiumCollected?: number;
 };
@@ -261,7 +267,12 @@ const App: React.FC = () => {
     reader.readAsText(file);
   }, [t]);
 
-  const handleLiveLoad = useCallback(async () => {
+  const flexRequestBody = (credentials: FlexCredentials) => JSON.stringify({
+    flexToken: credentials.flexToken,
+    flexQueryId: credentials.flexQueryId,
+  });
+
+  const handleLiveLoad = useCallback(async (credentials: FlexCredentials) => {
     setIsLoading(true);
     setError(null);
     setFileContent(null);
@@ -269,7 +280,11 @@ const App: React.FC = () => {
     setStatementData(null);
 
     try {
-      const response = await fetch('/api/ib/live', { method: 'POST' });
+      const response = await fetch('/api/ib/live', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: flexRequestBody(credentials),
+      });
       const payload = await response.json();
 
       if (!response.ok) {
@@ -288,7 +303,7 @@ const App: React.FC = () => {
     }
   }, [t]);
 
-  const handleFlexLoad = useCallback(async () => {
+  const handleFlexLoad = useCallback(async (credentials: FlexCredentials) => {
     setIsLoading(true);
     setError(null);
     setFileContent(null);
@@ -296,7 +311,11 @@ const App: React.FC = () => {
     setStatementData(null);
 
     try {
-      const response = await fetch('/api/ib/flex', { method: 'POST' });
+      const response = await fetch('/api/ib/flex', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: flexRequestBody(credentials),
+      });
       const payload = await response.json();
 
       if (!response.ok) {
@@ -383,28 +402,58 @@ const App: React.FC = () => {
         if (!stockPosition || stockPosition.quantity === 0) return cycle;
 
         const exchangeRate = liveData.exchangeRates[stockPosition.currency] || statementData.exchangeRates[stockPosition.currency] || 1;
-        const currentPrice = stockPosition.closePrice || (stockPosition.value / stockPosition.quantity);
+        const currentPrice = stockPosition.closePrice || (stockPosition.value / exchangeRate / stockPosition.quantity);
         const currentStockValue = currentPrice * cycle.assignmentShares * exchangeRate;
-        const openCallSymbols = new Set(liveData.positions
-          .filter(position => position.isOption && position.optionType === 'C' && position.quantity < 0 && position.baseSymbol === cycle.symbol)
-          .map(position => position.symbol));
-        const newCallPremium = (liveData.sessionOptionSales || [])
+        const openCalls = liveData.positions.filter(position =>
+          position.isOption &&
+          position.optionType === 'C' &&
+          position.quantity < 0 &&
+          position.baseSymbol === cycle.symbol &&
+          position.strikePrice &&
+          isWheelExpiry(position.expiry)
+        );
+        const openCallContracts = openCalls.reduce((sum, position) => sum + Math.abs(position.quantity), 0);
+        const coveredCallStrike = openCallContracts > 0
+          ? openCalls.reduce((sum, position) => sum + (position.strikePrice || 0) * Math.abs(position.quantity), 0) / openCallContracts
+          : cycle.coveredCallStrike;
+        const coveredCallShares = coveredCallStrike
+          ? Math.min(
+            cycle.assignmentShares,
+            openCalls.reduce((sum, position) => sum + Math.abs(position.quantity) * position.multiplier, 0) || cycle.coveredCallShares || 0
+          )
+          : 0;
+        const uncoveredShares = cycle.assignmentShares - coveredCallShares;
+        const cappedStockValue = coveredCallStrike
+          ? ((coveredCallShares * coveredCallStrike) + (uncoveredShares * currentPrice)) * exchangeRate
+          : currentStockValue;
+        const newCallEvents = (liveData.sessionOptionSales || [])
           .filter(event => event.date && (!latestStatementDay || event.date > latestStatementDay)
             && event.optionType === 'C'
             && event.baseSymbol === cycle.symbol
-            && (!event.symbol || openCallSymbols.has(event.symbol)))
-          .reduce((sum, event) => sum + safeNumber(event.premium ?? event.premiumCollected), 0);
+            && isWheelExpiry(event.expiry));
+        const newCallPremium = newCallEvents.reduce((sum, event) => sum + safeNumber(event.premium ?? event.premiumCollected), 0);
         const totalCallPremium = cycle.totalCallPremium + newCallPremium;
-        const unrealizedStockPL = currentStockValue - cycle.netAssignmentCost;
+        const unrealizedStockPL = cappedStockValue - cycle.netAssignmentCost;
         const currentTotalPL = unrealizedStockPL + totalCallPremium + (cycle.otherIncome || 0);
         const start = parseDateKey(cycle.startDate).getTime();
         const durationDays = Number.isFinite(start) ? Math.max(1, Math.round((Date.now() - start) / 86400000)) : 1;
         return {
           ...cycle,
           totalCallPremium,
+          coveredCallStrike,
+          coveredCallShares,
+          cappedStockValue,
           currentStockValue,
           unrealizedStockPL,
           currentTotalPL,
+          tradeLog: [
+            ...cycle.tradeLog,
+            ...newCallEvents.map(event => ({
+              date: event.date || '',
+              description: `${event.action === 'buy' ? 'Call bought/closed' : 'Call sold'} (${event.symbol || cycle.symbol})`,
+              amount: safeNumber(event.premium ?? event.premiumCollected),
+            })),
+          ],
           annualizedReturn: cycle.assignmentCost > 0 ? (currentTotalPL / cycle.assignmentCost) * (365 / durationDays) : 0,
         };
       }),

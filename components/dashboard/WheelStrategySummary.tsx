@@ -18,10 +18,19 @@ const WheelStrategySummary: React.FC<WheelStrategySummaryProps> = ({ wheelCycleA
         const { completedCycles, pendingCycles } = wheelCycleAnalysis;
         if (completedCycles.length === 0 && pendingCycles.length === 0) return null;
 
-        const totalPL = completedCycles.reduce((sum, cycle) => sum + cycle.totalPL, 0);
+        const completedRealizedPL = completedCycles.reduce((sum, cycle) => sum + cycle.totalPL, 0);
+        const pendingMtmPL = pendingCycles.reduce((sum, cycle) => sum + (cycle.mtmWheelPL ?? cycle.currentTotalPL), 0);
+        const totalPL = completedRealizedPL + pendingMtmPL;
 
         const completedPremium = completedCycles.reduce((sum, cycle) => sum + cycle.initialPutPremium + cycle.totalCallPremium, 0);
-        const pendingPremium = pendingCycles.reduce((sum, cycle) => sum + cycle.initialPutPremium + cycle.totalCallPremium, 0);
+        const pendingPremium = pendingCycles.reduce(
+            (sum, cycle) => sum
+                + (cycle.realizedPutPL ?? cycle.initialPutPremium)
+                + (cycle.realizedCallPL || 0)
+                + (cycle.openPutCredit || 0)
+                + (cycle.openCallCredit || 0),
+            0
+        );
         const totalPremium = completedPremium + pendingPremium;
 
         const totalDuration = completedCycles.reduce((sum, cycle) => sum + cycle.durationDays, 0);

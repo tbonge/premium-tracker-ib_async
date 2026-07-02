@@ -1,0 +1,29 @@
+[
+  {
+    "name": "assigned stock basis ignores post-assignment put rolls",
+    "assignmentCost": 40000,
+    "assignedShares": 100,
+    "realizedPutPLThroughAssignment": -663.9938674,
+    "postAssignmentPutPL": -23424.1995,
+    "expectedEffectiveBasis": 406.639938674,
+    "expectedBadBasisIfPostAssignmentIncluded": 640.881933674
+  },
+  {
+    "name": "credit roll lowers effective basis",
+    "assignmentCost": 10000,
+    "assignedShares": 100,
+    "realizedPutPLThroughAssignment": 350,
+    "postAssignmentPutPL": 0,
+    "expectedEffectiveBasis": 96.5,
+    "expectedBadBasisIfPostAssignmentIncluded": 96.5
+  },
+  {
+    "name": "debit roll raises effective basis",
+    "assignmentCost": 10000,
+    "assignedShares": 100,
+    "realizedPutPLThroughAssignment": -125,
+    "postAssignmentPutPL": 0,
+    "expectedEffectiveBasis": 101.25,
+    "expectedBadBasisIfPostAssignmentIncluded": 101.25
+  }
+]

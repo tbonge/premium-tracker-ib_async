@@ -24,7 +24,14 @@ export const en = {
         },
         flexLoad: {
             button: "Load Flex History",
-            description: "Load historical statement data from IBKR Flex Web Service only. This works without IB Gateway when IB_FLEX_TOKEN and IB_FLEX_QUERY_ID were set before starting Vite."
+            description: "Load historical statement data from IBKR Flex Web Service only. This works without IB Gateway when Flex credentials are entered below or configured in the local environment."
+        },
+        flexCredentials: {
+            tokenLabel: "Flex Token",
+            tokenPlaceholder: "IBKR Flex Web Service token",
+            queryIdLabel: "Flex Query ID",
+            queryIdPlaceholder: "Saved Activity Flex Query ID",
+            storageNote: "Saved only in this browser's local storage. The values are sent to the local loader only when you load Flex or Gateway data."
         },
         dropzone: {
             dragAndDrop: "Drag and drop",
@@ -181,6 +188,7 @@ export const en = {
             availableShares: "Uncovered",
             coverage: "Coverage",
             shareCoverage: "Shares / Coverage",
+            uncovered: "Uncovered",
             uncoveredShort: "uncovered",
             openCalls: "Call Strike",
             average: "Avg.",
@@ -379,6 +387,15 @@ export const en = {
                 avgPL: { title: "Avg. P/L / Contract", description: "Average result per closed call.", tooltip: "Total realized short-call P/L divided by contracts closed." },
                 winRate: { title: "Win Rate", description: "Profitable or expired call contracts.", tooltip: "Percentage of identified closed short calls with non-negative realized P/L." },
                 assignmentRate: { title: "Assignment Rate", description: "Calls ending in stock assignment.", tooltip: "Percentage of identified closed calls that were assigned." }
+            },
+            closureBreakdown: {
+                method: "Close Method",
+                contracts: "Contracts",
+                share: "Share",
+                assigned: "Assigned",
+                rolled: "Rolled",
+                expired: "Expired",
+                boughtToClose: "Bought to Close"
             }
         },
         allocations: {
@@ -472,8 +489,8 @@ export const en = {
         },
         wheelSummary: {
             title: "Wheel Strategy Performance Summary",
-            totalPL: { title: "Total Wheel P/L", description: "Total realized P/L from all completed wheel cycles.", tooltip: "Sum of all profits and losses from every completed wheel cycle (Put Premium + Call Premium + Stock P/L)." },
-            totalPremium: { title: "Total Premium Collected", description: "From all completed and pending wheel cycles.", tooltip: "Sum of all put and call premiums collected across every wheel cycle, both completed and still in progress." },
+            totalPL: { title: "Wheel P/L Snapshot", description: "Completed realized P/L plus active mark-to-market wheel P/L.", tooltip: "Completed cycles use realized P/L. Active cycles use the rebuilt wheel MTM view: stock at current price, realized option P/L, and current open option market value." },
+            totalPremium: { title: "Wheel Premium Cash Flow", description: "Realized and open wheel option cash flows.", tooltip: "Sum of realized put/call P/L plus open put/call credits for wheel-tracked contracts. Open credits are shown as cash flow, not closed profit." },
             avgDuration: { title: "Avg. Cycle Duration", description: "Average duration of a completed wheel cycle.", value: "{{days}} Days", tooltip: "The average number of days from the start of a cycle (put assignment) to its end (stock sale)." },
             annualizedReturn: { title: "Overall Annualized Return", description: "Capital & time-weighted annualized return on completed cycles.", tooltip: "The time and capital-weighted annualized return for all completed cycles. This metric provides the most accurate picture of the strategy's overall efficiency." }
         },
@@ -483,23 +500,41 @@ export const en = {
                 title: "Pending Cycles",
                 headers: {
                     symbol: "Symbol",
+                    status: "Status",
                     startDate: "Start Date",
+                    shares: "Shares",
                     netCostBasis: "Net Cost Basis",
                     lastClose: "Last Close",
                     costBasisPerShare: "Basis/Sh",
                     putPremium: "Put Premium",
                     callPremium: "Call Premium",
+                    realizedPutPL: "Real. Put",
+                    realizedCallPL: "Real. Call",
+                    openPutCredit: "Open Put",
+                    openCallCredit: "Open Call",
+                    stockPLAtCurrent: "Stock P/L",
+                    ifCalledAwayPL: "If Called",
+                    mtmWheelPL: "MTM P/L",
                     otherIncome: "Div/SYEP",
                     currentValue: "Current Value",
-                    unrealizedStockPL: "Unrealized Stock P/L",
+                    unrealizedStockPL: "Stock P/L @ Call",
                     currentTotalPL: "Current Total P/L",
                     annualizedReturn: "Ann. Return"
                 },
                 tooltips: {
                     startDate: "The date you were assigned the shares, marking the start of the cycle.",
                     netCostBasis: "The effective cost of your shares after subtracting the premium from the initial put (Gross Cost - Put Premium).",
-                    currentTotalPL: "The current unrealized P/L for the entire cycle if you were to close it now (Unrealized Stock P/L + Total Call Premium + Other Income)."
+                    currentTotalPL: "The current cycle P/L using covered-call capped stock value when open calls exist, plus total call premium and other income."
                 }
+            },
+            statuses: {
+                "put-phase": "Put Phase",
+                "assigned-uncovered": "Uncovered",
+                "assigned-covered": "Covered",
+                "assigned-partial": "Partial",
+                "called-away": "Called Away",
+                closed: "Closed",
+                mixed: "Mixed"
             },
             completed: {
                 title: "Completed Cycles",
@@ -531,15 +566,27 @@ export const en = {
                 assignmentText: "{{shares}} shares @ {{price}}",
                 grossCostBasis: "Gross Cost Basis",
                 putPremiumApplied: "Put Premium Applied",
+                netPutPremium: "Net Put Premium",
+                netCallPremium: "Net Call Premium",
+                realizedPutPL: "Realized Put P/L",
+                realizedCallPL: "Realized Call P/L",
+                openPutCredit: "Open Put Credit",
+                openCallCredit: "Open Call Credit",
+                stockPLAtCurrent: "Stock P/L at Current",
+                ifCalledAwayPL: "If Called Away P/L",
+                mtmWheelPL: "Mark-to-Market Wheel P/L",
                 netCostBasis: "Net Cost Basis",
                 lastClose: "Last Close",
                 costBasisPerShare: "Basis / Share",
+                coveredCallStrike: "Covered Call Strike",
+                coveredShares: "covered shares",
                 otherIncome: "Dividends / SYEP",
                 sale: "Sale",
                 saleText: "{{shares}} shares @ {{price}}",
                 totalSaleProceeds: "Total Sale Proceeds",
                 stockPLOnNet: "Stock P/L (on Net Cost)",
                 tradeLogTitle: "Full Trade Log",
+                openPutsTitle: "Open Puts",
                 log: {
                     date: "Date",
                     description: "Description",

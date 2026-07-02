@@ -10,10 +10,21 @@ type Key = keyof Row;
 
 const WheelPositionTimeline: React.FC<Props> = ({ analysis, formatCurrency }) => {
     const { t } = useLocalization();
-    const rows = useMemo(() => [
-        ...analysis.pendingCycles.map(cycle => ({ cycle, status: t('dashboard.wheelTimeline.pending') })),
-        ...analysis.completedCycles.map(cycle => ({ cycle, status: t('dashboard.wheelTimeline.completed') })),
-    ].flatMap(({ cycle, status }) => cycle.tradeLog.map(event => ({ ...event, symbol: cycle.symbol, status, event: event.description }))), [analysis, t]);
+    const rows = useMemo(() => {
+        const pendingRows = new Map<string, Row>();
+        analysis.pendingCycles.forEach(cycle => {
+            [...cycle.tradeLog, ...(cycle.openPutLog || [])].forEach(log => {
+                const status = t('dashboard.wheelTimeline.pending');
+                const key = `${cycle.symbol}|${status}|${log.date}|${log.description}|${log.amount}`;
+                if (!pendingRows.has(key)) pendingRows.set(key, { ...log, symbol: cycle.symbol, status, event: log.description });
+            });
+        });
+        const completedRows = analysis.completedCycles.flatMap(cycle => {
+            const status = t('dashboard.wheelTimeline.completed');
+            return cycle.tradeLog.map(log => ({ ...log, symbol: cycle.symbol, status, event: log.description }));
+        });
+        return [...pendingRows.values(), ...completedRows];
+    }, [analysis, t]);
     const valueFor = useCallback((row: Row, key: Key) => row[key], []);
     const { sortedRows, sort, requestSort } = useSortableRows(rows, 'date' as Key, valueFor, 'desc');
     if (!rows.length) return null;

@@ -4,6 +4,8 @@ import process from 'node:process';
 
 const fixturePath = path.resolve('tests/calculation-fixtures.json');
 const fixtures = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
+const wheelFixturePath = path.resolve('tests/wheel-ledger-fixtures.json');
+const wheelFixtures = JSON.parse(fs.readFileSync(wheelFixturePath, 'utf8'));
 
 const nearlyEqual = (actual, expected) => Math.abs(actual - expected) < 0.000001;
 
@@ -38,10 +40,21 @@ for (const fixture of fixtures) {
   }
 }
 
+for (const fixture of wheelFixtures) {
+  const effectiveBasis = (fixture.assignmentCost - fixture.realizedPutPLThroughAssignment) / fixture.assignedShares;
+  const badBasis = (fixture.assignmentCost - fixture.realizedPutPLThroughAssignment - fixture.postAssignmentPutPL) / fixture.assignedShares;
+  if (!nearlyEqual(effectiveBasis, fixture.expectedEffectiveBasis)) {
+    failures.push(`${fixture.name}: effective basis expected ${fixture.expectedEffectiveBasis}, got ${effectiveBasis}`);
+  }
+  if (!nearlyEqual(badBasis, fixture.expectedBadBasisIfPostAssignmentIncluded)) {
+    failures.push(`${fixture.name}: bad-basis guard expected ${fixture.expectedBadBasisIfPostAssignmentIncluded}, got ${badBasis}`);
+  }
+}
+
 if (failures.length) {
   console.error('Calculation fixture validation failed:');
   failures.forEach(failure => console.error(`- ${failure}`));
   process.exit(1);
 }
 
-console.log(`Validated ${fixtures.length} calculation fixtures.`);
+console.log(`Validated ${fixtures.length} calculation fixtures and ${wheelFixtures.length} wheel ledger fixtures.`);

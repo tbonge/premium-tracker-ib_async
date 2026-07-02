@@ -1,10 +1,17 @@
 import { ParsedData, Position, ClosedPosition, ArocTrade, WheelCycle, WheelCycleAnalysis, WheelCycleTrade, PendingWheelCycle, MonthlySummary, WeeklySummary, TickerPL, NAVChange, ShortPutIncomeSummary, DailyOptionsSummary } from '../types';
-import { DAYS_PER_YEAR, DEFAULT_OPTION_MULTIPLIER } from '../constants';
+import { DAYS_PER_YEAR, DEFAULT_OPTION_MULTIPLIER, LEAPS_DTE_THRESHOLD } from '../constants';
 
 const safeParseFloat = (val: unknown): number => {
     if (typeof val === 'number') return Number.isFinite(val) ? val : 0;
     if (!val || typeof val !== 'string') return 0;
     return parseFloat(val.replace(/,/g, '')) || 0;
+};
+
+const isLeapsExpiry = (expiry?: string): boolean => {
+    if (!expiry) return false;
+    const date = new Date(`${expiry}T00:00:00`);
+    if (!Number.isFinite(date.getTime())) return false;
+    return Math.round((date.getTime() - Date.now()) / 86400000) >= LEAPS_DTE_THRESHOLD;
 };
 
 const parseOptionSymbol = (symbol: string): { isOption: boolean; optionType?: 'P' | 'C'; strikePrice?: number, expiry?: string, baseSymbol: string } => {
@@ -188,8 +195,17 @@ const parseCsvLine = (line: string): string[] => {
 
 function analyzeShortOptionIncome(trades: any[], exchangeRates: { [key: string]: number }, optionTypeToMatch: 'P' | 'C'): ShortPutIncomeSummary {
     if (!trades) {
-        return { totalRealizedPL: 0, numberOfContracts: 0, averagePLPerContract: 0, hasData: false };
+        return { totalRealizedPL: 0, numberOfContracts: 0, averagePLPerContract: 0, hasData: false, closureBreakdown: { assigned: 0, expired: 0, rolled: 0, boughtToClose: 0 } };
     }
+    const sameDayOpeningSells = new Set<string>();
+    trades.forEach(trade => {
+        const { baseSymbol, isOption, optionType } = parseOptionSymbol(trade.Symbol);
+        const code = trade.Code || '';
+        const quantity = safeParseFloat(trade.Quantity);
+        if (isOption && optionType === optionTypeToMatch && quantity < 0 && code.includes('O') && trade.parsedDate) {
+            sameDayOpeningSells.add(`${trade.parsedDate.toISOString().split('T')[0]}|${baseSymbol}|${optionType}`);
+        }
+    });
 
     const closedShortPuts = trades.filter(r => {
         const { isOption, optionType } = parseOptionSymbol(r.Symbol);
@@ -211,13 +227,15 @@ function analyzeShortOptionIncome(trades: any[], exchangeRates: { [key: string]:
     });
 
     if (closedShortPuts.length === 0) {
-        return { totalRealizedPL: 0, numberOfContracts: 0, averagePLPerContract: 0, hasData: false };
+        return { totalRealizedPL: 0, numberOfContracts: 0, averagePLPerContract: 0, hasData: false, closureBreakdown: { assigned: 0, expired: 0, rolled: 0, boughtToClose: 0 } };
     }
 
     let totalRealizedPL = 0;
     let numberOfContracts = 0;
+    const closureBreakdown = { assigned: 0, expired: 0, rolled: 0, boughtToClose: 0 };
 
     for (const trade of closedShortPuts) {
+        const { baseSymbol, optionType } = parseOptionSymbol(trade.Symbol);
         const currency = trade['Currency'];
         const rate = rateFor(exchangeRates, currency);
         
@@ -229,6 +247,16 @@ function analyzeShortOptionIncome(trades: any[], exchangeRates: { [key: string]:
         // Quantity will be positive for closing trades
         const quantity = safeParseFloat(trade['Quantity']);
         numberOfContracts += quantity;
+        const code = trade.Code || '';
+        if (code.includes('A')) {
+            closureBreakdown.assigned += quantity;
+        } else if (code.includes('Ep')) {
+            closureBreakdown.expired += quantity;
+        } else if (trade.parsedDate && sameDayOpeningSells.has(`${trade.parsedDate.toISOString().split('T')[0]}|${baseSymbol}|${optionType}`)) {
+            closureBreakdown.rolled += quantity;
+        } else {
+            closureBreakdown.boughtToClose += quantity;
+        }
     }
 
     const averagePLPerContract = numberOfContracts > 0 ? totalRealizedPL / numberOfContracts : 0;
@@ -237,6 +265,7 @@ function analyzeShortOptionIncome(trades: any[], exchangeRates: { [key: string]:
         totalRealizedPL,
         numberOfContracts,
         averagePLPerContract,
+        closureBreakdown,
         hasData: true
     };
 }
@@ -623,7 +652,7 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
         .sort((a, b) => a.parsedDate!.getTime() - b.parsedDate!.getTime());
 
     for (const trade of allTrades) {
-        const { baseSymbol, isOption, optionType, strikePrice } = parseOptionSymbol(trade.Symbol);
+        const { baseSymbol, isOption, optionType, strikePrice, expiry } = parseOptionSymbol(trade.Symbol);
         const quantity = safeParseFloat(trade.Quantity);
         const code = trade.Code || '';
         const currency = trade['Currency'];
@@ -674,8 +703,11 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                 const multiplier = instrumentMultipliers.get(trade.Symbol.trim()) || DEFAULT_OPTION_MULTIPLIER;
                 const sharesAcquired = numContractsAssigned * multiplier;
 
+                const putRollLogs = pendingPutRollLogs.get(baseSymbol) || [];
+                const putRollPremium = putRollLogs.reduce((sum, log) => sum + log.amount, 0);
+                const totalPutPremium = initialPutPremium + putRollPremium;
                 const grossStockCostBasis = (strikePrice! * sharesAcquired) * rate;
-                const effectiveCostBasis = grossStockCostBasis - initialPutPremium;
+                const effectiveCostBasis = grossStockCostBasis - totalPutPremium;
 
                 if (!stockLots.has(baseSymbol)) {
                     stockLots.set(baseSymbol, []);
@@ -694,7 +726,7 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                 inProgressCycles.set(`${baseSymbol}-${lotIndex}`, {
                     symbol: baseSymbol,
                     currency: currency,
-                    initialPutPremium: initialPutPremium,
+                    initialPutPremium: totalPutPremium,
                     totalCallPremium: 0,
                     otherIncome: 0,
                     stockPL: 0,
@@ -705,14 +737,14 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                     assignmentCost: grossStockCostBasis, // Store gross cost for transparency
                     netAssignmentCost: effectiveCostBasis,
                     tradeLog: [
-                    ...(pendingPutRollLogs.get(baseSymbol) || []),
+                    ...putRollLogs,
                     {
                         date: trade.parsedDate.toISOString().split('T')[0],
                         description: `Assigned ${sharesAcquired} shares @ ${strikePrice!.toFixed(2)}`,
                         amount: -grossStockCostBasis
                     }, {
                         date: trade.parsedDate.toISOString().split('T')[0],
-                        description: `Put Premium Applied (${trade.Symbol})`,
+                        description: `Put Sold - Assigned (${trade.Symbol})`,
                         amount: initialPutPremium
                     }]
                 });
@@ -724,28 +756,31 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                     diagnostics.warnings.push(`Could not match opening put sale for assignment ${trade.Symbol}; put premium was estimated as 0.`);
                 }
                 const putPremiumRealized = 0; // Fallback to 0 if no open trade is found
+                const putRollLogs = pendingPutRollLogs.get(baseSymbol) || [];
+                const putRollPremium = putRollLogs.reduce((sum, log) => sum + log.amount, 0);
+                const totalPutPremium = putPremiumRealized + putRollPremium;
                 const multiplier = instrumentMultipliers.get(trade.Symbol.trim()) || DEFAULT_OPTION_MULTIPLIER;
                 const sharesAcquired = quantity * multiplier;
                 const grossStockCostBasis = (strikePrice! * sharesAcquired) * rate;
-                const effectiveCostBasis = grossStockCostBasis - putPremiumRealized;
+                const effectiveCostBasis = grossStockCostBasis - totalPutPremium;
                 if (!stockLots.has(baseSymbol)) stockLots.set(baseSymbol, []);
                 const lotIndex = stockLots.get(baseSymbol)!.length;
                 const newLot = { quantity: sharesAcquired, costBasis: effectiveCostBasis, grossCostBasis: grossStockCostBasis, acquisitionDate: trade.parsedDate, coveredShares: 0, lotIndex };
                 stockLots.get(baseSymbol)?.push(newLot);
                 inProgressCycles.set(`${baseSymbol}-${lotIndex}`, {
-                    symbol: baseSymbol, currency: currency, initialPutPremium: putPremiumRealized, totalCallPremium: 0, stockPL: 0,
+                    symbol: baseSymbol, currency: currency, initialPutPremium: totalPutPremium, totalCallPremium: 0, stockPL: 0,
                     otherIncome: 0,
                     startDate: trade.parsedDate.toISOString().split('T')[0], lotIndex: lotIndex, assignmentPrice: strikePrice!, assignmentShares: sharesAcquired,
                     assignmentCost: grossStockCostBasis,
                     netAssignmentCost: effectiveCostBasis,
-                    tradeLog: [...(pendingPutRollLogs.get(baseSymbol) || []), { date: trade.parsedDate.toISOString().split('T')[0], description: `Assigned ${sharesAcquired} shares @ ${strikePrice!.toFixed(2)}`, amount: -grossStockCostBasis }]
+                    tradeLog: [...putRollLogs, { date: trade.parsedDate.toISOString().split('T')[0], description: `Assigned ${sharesAcquired} shares @ ${strikePrice!.toFixed(2)}`, amount: -grossStockCostBasis }]
                 });
                 pendingPutRollLogs.delete(baseSymbol);
             }
         }
 
         // Covered Call Premium
-        else if (isOption && optionType === 'C' && quantity < 0 && code.includes('O')) {
+        else if (isOption && optionType === 'C' && quantity < 0 && code.includes('O') && !isLeapsExpiry(expiry)) {
             const contractsSold = Math.abs(quantity);
             const multiplier = instrumentMultipliers.get(trade.Symbol.trim()) || DEFAULT_OPTION_MULTIPLIER;
             let sharesToCover = contractsSold * multiplier;
@@ -773,7 +808,7 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                             cycle.totalCallPremium = (cycle.totalCallPremium || 0) + premiumForThisLot;
                             cycle.tradeLog.push({
                                 date: trade.parsedDate.toISOString().split('T')[0],
-                                description: `Call Premium (${trade.Symbol})`,
+                                description: `Call Sold (${trade.Symbol})`,
                                 amount: premiumForThisLot
                             });
 
@@ -786,7 +821,7 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
         }
         
         // Closing a short call (expiration or buy-to-close) -> makes a lot available again
-        else if (isOption && optionType === 'C' && quantity > 0 && (code.includes('C') || code.includes('Ep'))) {
+        else if (isOption && optionType === 'C' && quantity > 0 && (code.includes('C') || code.includes('Ep')) && !isLeapsExpiry(expiry)) {
             const contractsClosed = quantity;
             const multiplier = instrumentMultipliers.get(trade.Symbol.trim()) || DEFAULT_OPTION_MULTIPLIER;
             let sharesToUncover = contractsClosed * multiplier;
@@ -808,7 +843,7 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                             cycle.totalCallPremium = (cycle.totalCallPremium || 0) + amountForThisLot;
                             cycle.tradeLog.push({
                                 date: trade.parsedDate.toISOString().split('T')[0],
-                                description: `${code.includes('Ep') ? 'Call Expired/Closed' : 'Call Roll/Close'} (${trade.Symbol})`,
+                                description: `${code.includes('Ep') ? 'Call Expired/Closed' : 'Call Bought/Closed'} (${trade.Symbol})`,
                                 amount: amountForThisLot
                             });
                         }
@@ -893,10 +928,33 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
     for (const cycleInProgress of inProgressCycles.values()) {
         const stockPosition = stockPositionsMap.get(cycleInProgress.symbol!);
         if (stockPosition && stockPosition.quantity !== 0) {
-            const pricePerShare = stockPosition.value / stockPosition.quantity;
-            const currentStockValue = pricePerShare * cycleInProgress.assignmentShares!;
+            const exchangeRate = rateFor(exchangeRates, stockPosition.currency);
+            const pricePerShare = stockPosition.closePrice || (stockPosition.value / exchangeRate / stockPosition.quantity);
+            const currentStockValue = pricePerShare * cycleInProgress.assignmentShares! * exchangeRate;
+            const openCalls = openPositions.filter(position =>
+                position.isOption &&
+                position.optionType === 'C' &&
+                position.quantity < 0 &&
+                position.baseSymbol === cycleInProgress.symbol &&
+                position.strikePrice &&
+                !isLeapsExpiry(position.expiry)
+            );
+            const openCallContracts = openCalls.reduce((sum, position) => sum + Math.abs(position.quantity), 0);
+            const coveredCallStrike = openCallContracts > 0
+                ? openCalls.reduce((sum, position) => sum + (position.strikePrice || 0) * Math.abs(position.quantity), 0) / openCallContracts
+                : undefined;
+            const coveredCallShares = coveredCallStrike
+                ? Math.min(
+                    cycleInProgress.assignmentShares!,
+                    openCalls.reduce((sum, position) => sum + Math.abs(position.quantity) * (position.multiplier || DEFAULT_OPTION_MULTIPLIER), 0)
+                )
+                : 0;
+            const uncoveredShares = cycleInProgress.assignmentShares! - coveredCallShares;
+            const cappedStockValue = coveredCallStrike
+                ? ((coveredCallShares * coveredCallStrike) + (uncoveredShares * pricePerShare)) * exchangeRate
+                : currentStockValue;
             
-            const unrealizedStockPL = currentStockValue - cycleInProgress.netAssignmentCost!;
+            const unrealizedStockPL = cappedStockValue - cycleInProgress.netAssignmentCost!;
             const income = incomeForCycle(cycleInProgress.symbol!, cycleInProgress.startDate!);
             const otherIncome = (cycleInProgress.otherIncome || 0) + income.amount;
             const currentTotalPL = unrealizedStockPL + (cycleInProgress.totalCallPremium || 0) + otherIncome;
@@ -916,6 +974,9 @@ function analyzeWheelCycles(trades: any[], exchangeRates: { [key: string]: numbe
                 netAssignmentCost: cycleInProgress.netAssignmentCost!,
                 totalCallPremium: cycleInProgress.totalCallPremium || 0,
                 otherIncome,
+                coveredCallStrike,
+                coveredCallShares,
+                cappedStockValue,
                 annualizedReturn: cycleInProgress.assignmentCost! > 0 ? (currentTotalPL / cycleInProgress.assignmentCost!) * (DAYS_PER_YEAR / durationDays) : 0,
                 currentStockValue,
                 unrealizedStockPL,
@@ -1012,8 +1073,8 @@ export function parseIbkrCsv(csvString: string): ParsedData {
             otherFXTranslations: 0,
             endingValue: 0,
         },
-        shortPutIncomeSummary: { totalRealizedPL: 0, numberOfContracts: 0, averagePLPerContract: 0, hasData: false },
-        shortCallIncomeSummary: { totalRealizedPL: 0, numberOfContracts: 0, averagePLPerContract: 0, assignmentRate: 0, winRate: 0, hasData: false },
+        shortPutIncomeSummary: { totalRealizedPL: 0, numberOfContracts: 0, averagePLPerContract: 0, closureBreakdown: { assigned: 0, expired: 0, rolled: 0, boughtToClose: 0 }, hasData: false },
+        shortCallIncomeSummary: { totalRealizedPL: 0, numberOfContracts: 0, averagePLPerContract: 0, assignmentRate: 0, winRate: 0, closureBreakdown: { assigned: 0, expired: 0, rolled: 0, boughtToClose: 0 }, hasData: false },
         historyStatus: { source: 'csv', complete: true, warnings: [] },
         marginLiquidity: {
             netLiquidation: 0, totalCash: 0, availableFunds: 0, excessLiquidity: 0,

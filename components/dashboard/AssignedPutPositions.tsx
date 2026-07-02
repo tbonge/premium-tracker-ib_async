@@ -2,7 +2,8 @@ import React, { useMemo, useState } from 'react';
 import { PendingWheelCycle, Position } from '../../types';
 import { useLocalization } from '../../context/LocalizationContext';
 import SortableHeader, { compareSortValues, SortDirection } from './SortableHeader';
-import { AlertTriangleIcon, CheckCircleIcon, DEFAULT_OPTION_MULTIPLIER, InfoIcon } from '../../constants';
+import { AlertTriangleIcon, CheckCircleIcon, DEFAULT_OPTION_MULTIPLIER, InfoIcon, LEAPS_DTE_THRESHOLD } from '../../constants';
+import { calendarDte } from '../../utils/dates';
 
 interface AssignedPutPositionsProps {
     cycles: PendingWheelCycle[];
@@ -13,31 +14,72 @@ interface AssignedPutPositionsProps {
 }
 
 type CoverageStatus = 'fully-covered' | 'partially-covered' | 'needs-call' | 'odd-lot-only';
-type SortKey = 'symbol' | 'startDate' | 'assignmentShares' | 'assignmentPrice' | 'basisAfterPutPremium' | 'wheelBreakevenAfterCalls' | 'currentPrice' | 'daysHeld' | 'openCallStrike' | 'coverageStatus' | 'minimumCallStrike' | 'targetCallStrike' | 'totalCallPremium' | 'currentTotalPL';
+type SortKey = 'symbol' | 'assignmentShares' | 'assignmentPrice' | 'basisAfterPutPremium' | 'wheelBreakevenAfterCalls' | 'currentPrice' | 'daysHeld' | 'openCallStrike' | 'coverageStatus' | 'minimumCallStrike' | 'targetCallStrike' | 'totalCallPremium' | 'currentTotalPL';
+
+const isWheelCall = (position: Position) => (calendarDte(position.expiry) ?? -Infinity) < LEAPS_DTE_THRESHOLD;
 
 const AssignedPutPositions: React.FC<AssignedPutPositionsProps> = ({ cycles, positions, exchangeRates, formatInSelectedCurrency, formatCurrency }) => {
     const { t } = useLocalization();
-    const [sort, setSort] = useState<{ key: SortKey; direction: SortDirection }>({ key: 'startDate', direction: 'desc' });
-    const rows = useMemo(() => cycles.map(cycle => {
-        const openCalls = positions.filter(position => position.isOption && position.optionType === 'C' && position.quantity < 0 && position.baseSymbol === cycle.symbol);
-        const coveredShares = openCalls.reduce((sum, position) => sum + Math.abs(position.quantity) * (position.multiplier || DEFAULT_OPTION_MULTIPLIER), 0);
+    const [sort, setSort] = useState<{ key: SortKey; direction: SortDirection }>({ key: 'symbol', direction: 'asc' });
+    const rows = useMemo(() => {
+        const groupedCycles = new Map<string, PendingWheelCycle & { cycleCount: number }>();
+        cycles.forEach(cycle => {
+            const existing = groupedCycles.get(cycle.symbol);
+            if (!existing) {
+                groupedCycles.set(cycle.symbol, { ...cycle, tradeLog: [...cycle.tradeLog], openPutLog: [...(cycle.openPutLog || [])], cycleCount: 1 });
+                return;
+            }
+
+            existing.startDate = existing.startDate < cycle.startDate ? existing.startDate : cycle.startDate;
+            existing.assignmentShares += cycle.assignmentShares;
+            existing.assignmentCost += cycle.assignmentCost;
+            existing.netAssignmentCost += cycle.netAssignmentCost;
+            existing.initialPutPremium += cycle.initialPutPremium;
+            existing.totalCallPremium += cycle.totalCallPremium;
+            existing.otherIncome = (existing.otherIncome || 0) + (cycle.otherIncome || 0);
+            existing.currentStockValue += cycle.currentStockValue;
+            existing.unrealizedStockPL += cycle.unrealizedStockPL;
+            existing.currentTotalPL += cycle.currentTotalPL;
+            existing.tradeLog.push(...cycle.tradeLog);
+            existing.openPutLog = [...(existing.openPutLog || []), ...(cycle.openPutLog || [])];
+            existing.cycleCount += 1;
+            existing.assignmentPrice = existing.assignmentShares
+                ? existing.assignmentCost / existing.assignmentShares
+                : 0;
+        });
+
+        return [...groupedCycles.values()].map(cycle => {
+        const openCalls = positions.filter(position => position.isOption && position.optionType === 'C' && position.quantity < 0 && position.baseSymbol === cycle.symbol && isWheelCall(position));
+        const coveredShares = Math.min(
+            cycle.assignmentShares,
+            openCalls.reduce((sum, position) => sum + Math.abs(position.quantity) * (position.multiplier || DEFAULT_OPTION_MULTIPLIER), 0)
+        );
         const openCallContracts = openCalls.reduce((sum, position) => sum + Math.abs(position.quantity), 0);
         const openCallStrike = openCallContracts
             ? openCalls.reduce((sum, position) => sum + (position.strikePrice || 0) * Math.abs(position.quantity), 0) / openCallContracts
             : 0;
+        const callLogs = [...new Map(cycle.tradeLog
+            .filter(log => /call (premium|sold|bought\/closed|roll\/close|expired\/closed)/i.test(log.description))
+            .map(log => [`${log.date}|${log.description}|${log.amount}`, log])).values()]
+        const loggedCallPremium = callLogs.reduce((sum, log) => sum + log.amount, 0);
+        const totalCallPremium = callLogs.length > 0 ? loggedCallPremium : cycle.totalCallPremium;
         const hasMultipleCallStrikes = new Set(openCalls.map(position => position.strikePrice || 0)).size > 1;
         const stockPosition = positions.find(position => !position.isOption && position.symbol === cycle.symbol);
         const rate = exchangeRates[cycle.currency] || 1;
         const currentPrice = stockPosition?.closePrice || (cycle.assignmentShares ? cycle.currentStockValue / rate / cycle.assignmentShares : 0);
+        const uncoveredShares = Math.max(0, cycle.assignmentShares - coveredShares);
+        const cappedStockValue = openCallStrike
+            ? ((coveredShares * openCallStrike) + (uncoveredShares * currentPrice)) * rate
+            : cycle.currentStockValue;
         const basisAfterPutPremium = cycle.assignmentShares
             ? cycle.netAssignmentCost / rate / cycle.assignmentShares
             : 0;
         const wheelBreakevenAfterCalls = cycle.assignmentShares
-            ? (cycle.netAssignmentCost - cycle.totalCallPremium) / rate / cycle.assignmentShares
+            ? (cycle.netAssignmentCost - totalCallPremium) / rate / cycle.assignmentShares
             : 0;
         const start = new Date(`${cycle.startDate}T00:00:00`).getTime();
         const daysHeld = Number.isFinite(start) ? Math.max(0, Math.floor((Date.now() - start) / 86400000)) : 0;
-        const availableShares = Math.max(0, cycle.assignmentShares - coveredShares);
+        const availableShares = uncoveredShares;
         const coverageRatio = cycle.assignmentShares > 0 ? coveredShares / cycle.assignmentShares : 0;
         const roundLotUncoveredShares = Math.floor(availableShares / 100) * 100;
         const coverageStatus: CoverageStatus = availableShares <= 0
@@ -48,6 +90,10 @@ const AssignedPutPositions: React.FC<AssignedPutPositionsProps> = ({ cycles, pos
         const targetCallStrike = Math.max(minimumCallStrike, currentPrice * 1.05);
         return {
             ...cycle,
+            totalCallPremium,
+            cappedStockValue,
+            unrealizedStockPL: cappedStockValue - cycle.netAssignmentCost,
+            currentTotalPL: (cappedStockValue - cycle.netAssignmentCost) + totalCallPremium + (cycle.otherIncome || 0),
             currentPrice,
             basisAfterPutPremium,
             wheelBreakevenAfterCalls,
@@ -64,7 +110,8 @@ const AssignedPutPositions: React.FC<AssignedPutPositionsProps> = ({ cycles, pos
     }).sort((a, b) => {
         const result = compareSortValues(a[sort.key], b[sort.key]);
         return sort.direction === 'asc' ? result : -result;
-    }), [cycles, positions, exchangeRates, sort]);
+    });
+    }, [cycles, positions, exchangeRates, sort]);
     const requestSort = (key: SortKey) => setSort(current => ({ key, direction: current.key === key && current.direction === 'desc' ? 'asc' : 'desc' }));
 
     if (!rows.length) return null;
@@ -82,8 +129,7 @@ const AssignedPutPositions: React.FC<AssignedPutPositionsProps> = ({ cycles, pos
                     <thead><tr className="border-b border-brand-card">
                         {header('symbol', t('dashboard.assignedPuts.symbol'), false)}
                         {header('coverageStatus', t('dashboard.assignedPuts.status'), false)}
-                        {header('startDate', t('dashboard.assignedPuts.assigned'), false)}
-                        {header('assignmentShares', t('dashboard.assignedPuts.shareCoverage'))}
+                        {header('assignmentShares', t('dashboard.assignedPuts.uncovered'))}
                         {header('openCallStrike', t('dashboard.assignedPuts.openCalls'))}
                         {header('assignmentPrice', t('dashboard.assignedPuts.assignmentPrice'))}
                         {header('basisAfterPutPremium', t('dashboard.assignedPuts.basisAfterPut'))}
@@ -95,8 +141,8 @@ const AssignedPutPositions: React.FC<AssignedPutPositionsProps> = ({ cycles, pos
                         {header('totalCallPremium', t('dashboard.assignedPuts.callPremium'))}
                         {header('currentTotalPL', t('dashboard.assignedPuts.totalPL'))}
                     </tr></thead>
-                    <tbody>{rows.map((row, index) => (
-                        <tr key={`${row.symbol}-${row.startDate}-${index}`} className="border-b border-brand-card last:border-b-0 hover:bg-brand-card/50">
+                    <tbody>{rows.map((row) => (
+                        <tr key={row.symbol} className="border-b border-brand-card last:border-b-0 hover:bg-brand-card/50">
                             <td className="p-2 font-mono truncate">{row.symbol}</td>
                             <td className={`p-2 font-semibold ${row.coverageStatus === 'fully-covered' ? 'text-brand-success' : row.coverageStatus === 'needs-call' ? 'text-brand-danger' : 'text-yellow-400'}`}>
                                 <span className="inline-flex items-center gap-2">
@@ -106,12 +152,8 @@ const AssignedPutPositions: React.FC<AssignedPutPositionsProps> = ({ cycles, pos
                                     {t(`dashboard.assignedPuts.coverageStatuses.${row.coverageStatus}`)}
                                 </span>
                             </td>
-                            <td className="p-2 font-mono truncate">{row.startDate}</td>
                             <td className="p-2 text-right">
-                                <div className="font-mono">{row.assignmentShares}</div>
-                                <div className={`text-[11px] ${row.availableShares >= 100 ? 'text-brand-danger' : 'text-brand-text-secondary'}`}>
-                                    {row.availableShares} {t('dashboard.assignedPuts.uncoveredShort')} / {row.coverageRatio.toLocaleString(undefined, { style: 'percent', maximumFractionDigits: 0 })}
-                                </div>
+                                <span className={`font-mono ${row.availableShares >= 100 ? 'text-brand-danger' : 'text-brand-text-secondary'}`}>{row.availableShares}</span>
                             </td>
                             <td className="p-2">
                                 {row.openCallStrike ? (
@@ -127,7 +169,7 @@ const AssignedPutPositions: React.FC<AssignedPutPositionsProps> = ({ cycles, pos
                             <td className={`p-2 font-mono text-right ${row.currentPrice < row.wheelBreakevenAfterCalls ? 'text-brand-danger' : 'text-brand-success'}`}>{formatCurrency(row.currentPrice, row.currency)}</td>
                             <td className="p-2 font-mono text-right">{formatCurrency(row.minimumCallStrike, row.currency)}</td>
                             <td className="p-2 font-mono text-right">{formatCurrency(row.targetCallStrike, row.currency)}</td>
-                            <td className="p-2 font-mono text-right">{row.daysHeld}</td><td className="p-2 font-mono text-right text-brand-success">{formatInSelectedCurrency(row.totalCallPremium)}</td>
+                            <td className="p-2 font-mono text-right">{row.daysHeld}</td><td className={`p-2 font-mono text-right ${row.totalCallPremium >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>{formatInSelectedCurrency(row.totalCallPremium)}</td>
                             <td className={`p-2 font-mono text-right ${row.currentTotalPL >= 0 ? 'text-brand-success' : 'text-brand-danger'}`}>{formatInSelectedCurrency(row.currentTotalPL)}</td>
                         </tr>
                     ))}</tbody>

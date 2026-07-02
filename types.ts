@@ -77,6 +77,15 @@ export interface WheelCycleTrade {
     amount: number;
 }
 
+export type WheelCycleStatus =
+  | 'put-phase'
+  | 'assigned-uncovered'
+  | 'assigned-covered'
+  | 'assigned-partial'
+  | 'called-away'
+  | 'closed'
+  | 'mixed';
+
 export interface WheelCycle {
   symbol: string;
   currency: string;
@@ -104,6 +113,7 @@ export interface WheelCycle {
 export interface PendingWheelCycle {
   symbol: string;
   currency: string;
+  status?: WheelCycleStatus;
   initialPutPremium: number;
   startDate: string;
   assignmentShares: number;
@@ -112,11 +122,24 @@ export interface PendingWheelCycle {
   netAssignmentCost: number;
   totalCallPremium: number;
   otherIncome?: number;
+  coveredCallStrike?: number;
+  coveredCallShares?: number;
+  cappedStockValue?: number;
   annualizedReturn?: number;
   currentStockValue: number;
   unrealizedStockPL: number;
   currentTotalPL: number;
   tradeLog: WheelCycleTrade[];
+  openPutLog?: WheelCycleTrade[];
+  realizedPutPL?: number;
+  realizedCallPL?: number;
+  openPutCredit?: number;
+  openCallCredit?: number;
+  stockPLAtCurrent?: number;
+  ifCalledAwayPL?: number;
+  mtmWheelPL?: number;
+  effectiveBasisPerShare?: number;
+  dataConfidence?: CalculationConfidence;
 }
 
 export interface WheelCycleAnalysis {
@@ -171,6 +194,12 @@ export interface ShortPutIncomeSummary {
     numberOfContracts: number;
     averagePLPerContract: number;
     hasData: boolean;
+    closureBreakdown?: {
+      assigned: number;
+      expired: number;
+      rolled: number;
+      boughtToClose: number;
+    };
 }
 
 export interface HistoryStatus {

@@ -14,11 +14,19 @@ interface SortContextValue {
 }
 
 const SortContext = createContext<SortContextValue | null>(null);
+const WIDGET_ORDER_STORAGE_KEY = 'dashboard-widget-order';
+const WIDGET_ORDER_VERSION_KEY = 'dashboard-widget-order-version';
+const WIDGET_ORDER_VERSION = '2026-07-screenshot-order';
 
 export const SortableWidgetGroup: React.FC<{ ids: string[]; children: React.ReactNode }> = ({ ids, children }) => {
     const [order, setOrder] = useState<string[]>(() => {
         try {
-            const saved = JSON.parse(window.localStorage.getItem('dashboard-widget-order') || '[]') as string[];
+            if (window.localStorage.getItem(WIDGET_ORDER_VERSION_KEY) !== WIDGET_ORDER_VERSION) {
+                window.localStorage.setItem(WIDGET_ORDER_VERSION_KEY, WIDGET_ORDER_VERSION);
+                window.localStorage.setItem(WIDGET_ORDER_STORAGE_KEY, JSON.stringify(ids));
+                return ids;
+            }
+            const saved = JSON.parse(window.localStorage.getItem(WIDGET_ORDER_STORAGE_KEY) || '[]') as string[];
             return [...saved.filter(id => ids.includes(id)), ...ids.filter(id => !saved.includes(id))];
         } catch {
             return ids;
@@ -35,7 +43,8 @@ export const SortableWidgetGroup: React.FC<{ ids: string[]; children: React.Reac
             next.splice(sourceIndex, 1);
             next.splice(targetIndex, 0, source);
             try {
-                window.localStorage.setItem('dashboard-widget-order', JSON.stringify(next));
+                window.localStorage.setItem(WIDGET_ORDER_VERSION_KEY, WIDGET_ORDER_VERSION);
+                window.localStorage.setItem(WIDGET_ORDER_STORAGE_KEY, JSON.stringify(next));
             } catch {
                 // Storage may be unavailable in private browsing contexts.
             }
@@ -103,11 +112,13 @@ const CollapsibleWidget: React.FC<CollapsibleWidgetProps> = ({ id, title, summar
     }
 
     return (
-        <div className="relative" style={{ order: sorting?.order.indexOf(id) ?? 0 }}>
-            <button type="button" onClick={toggle} className="absolute -right-2 -top-2 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-brand-card text-brand-text-secondary shadow-md hover:text-brand-text-primary" title="Show compact summary" aria-label={`Collapse ${title}`} aria-expanded={true}>
+        <div className="relative mb-4" style={{ order: sorting?.order.indexOf(id) ?? 0 }}>
+            <button type="button" onClick={toggle} className="absolute right-4 top-4 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-brand-card/90 text-brand-text-secondary shadow-md hover:text-brand-text-primary" title="Show compact summary" aria-label={`Collapse ${title}`} aria-expanded={true}>
                 <ChevronUpIcon className="w-4 h-4" />
             </button>
-            {children}
+            <div className="[&>*]:!mb-0 [&>*]:!mt-0 [&>*]:!pr-14">
+                {children}
+            </div>
         </div>
     );
 };

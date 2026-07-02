@@ -59,14 +59,32 @@ const ScenarioReporting: React.FC<Props> = ({
         ];
     }, [cash, likelyAssignmentValue, optionValue, stockValue, totalNAV, unlikelyAssignmentValue]);
 
+    const groupedPendingCycles = useMemo(() => wheelCycleAnalysis.pendingCycles.map(cycle => ({
+        symbol: cycle.symbol,
+        startDate: cycle.startDate,
+        status: cycle.status || 'assigned-uncovered',
+        realizedPutPL: cycle.realizedPutPL ?? cycle.initialPutPremium,
+        realizedCallPL: cycle.realizedCallPL || 0,
+        openPutCredit: cycle.openPutCredit || 0,
+        openCallCredit: cycle.openCallCredit || 0,
+        ifCalledAwayPL: cycle.ifCalledAwayPL ?? cycle.currentTotalPL,
+        mtmWheelPL: cycle.mtmWheelPL ?? cycle.currentTotalPL,
+        otherIncome: cycle.otherIncome || 0,
+    })), [wheelCycleAnalysis.pendingCycles]);
+
     const exportWheel = () => downloadCsv('wheel-cycles.csv', [
-        ...wheelCycleAnalysis.pendingCycles.map(cycle => ({
+        ...groupedPendingCycles.map(cycle => ({
             status: 'pending',
             symbol: cycle.symbol,
             startDate: cycle.startDate,
-            totalPL: cycle.currentTotalPL,
-            callPremium: cycle.totalCallPremium,
-            otherIncome: cycle.otherIncome || 0,
+            wheelStatus: cycle.status,
+            realizedPutPL: cycle.realizedPutPL,
+            realizedCallPL: cycle.realizedCallPL,
+            openPutCredit: cycle.openPutCredit,
+            openCallCredit: cycle.openCallCredit,
+            ifCalledAwayPL: cycle.ifCalledAwayPL,
+            mtmWheelPL: cycle.mtmWheelPL,
+            otherIncome: cycle.otherIncome,
         })),
         ...wheelCycleAnalysis.completedCycles.map(cycle => ({
             status: 'completed',

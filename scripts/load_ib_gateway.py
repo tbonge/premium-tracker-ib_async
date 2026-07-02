@@ -32,7 +32,17 @@ def safe_float(value: Any, default: float = 0.0) -> float:
     try:
         if value is None:
             return default
-        parsed = float(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text or text in {"-", "--", "N/A"}:
+                return default
+            negative = text.startswith("(") and text.endswith(")")
+            text = text.strip("()").replace(",", "").replace("$", "").replace("€", "").replace("£", "").strip()
+            parsed = float(text)
+            if negative:
+                parsed = -parsed
+        else:
+            parsed = float(value)
         if math.isnan(parsed) or math.isinf(parsed):
             return default
         return parsed
@@ -227,6 +237,7 @@ def empty_dashboard(base_currency: str = "USD") -> dict[str, Any]:
             "totalRealizedPL": 0,
             "numberOfContracts": 0,
             "averagePLPerContract": 0,
+            "closureBreakdown": {"assigned": 0, "expired": 0, "rolled": 0, "boughtToClose": 0},
             "hasData": False,
         },
         "shortCallIncomeSummary": {
@@ -235,6 +246,7 @@ def empty_dashboard(base_currency: str = "USD") -> dict[str, Any]:
             "averagePLPerContract": 0,
             "assignmentRate": 0,
             "winRate": 0,
+            "closureBreakdown": {"assigned": 0, "expired": 0, "rolled": 0, "boughtToClose": 0},
             "hasData": False,
         },
         "historyStatus": {
@@ -612,15 +624,17 @@ def read_option_premiums(
         gross_premium = price * shares * multiplier
         if side in {"SLD", "SELL"}:
             signed_premium = gross_premium - commission
-            symbol, base_symbol, _, option_type, _, _ = contract_symbol(contract)
+            symbol, base_symbol, _, option_type, _, expiry = contract_symbol(contract)
             option_sales.append(
                 {
                     "date": day or "",
                     "symbol": symbol,
                     "baseSymbol": base_symbol,
                     "optionType": option_type or "",
+                    "expiry": expiry or "",
                     "quantity": shares,
                     "premium": signed_premium,
+                    "action": "sell",
                 }
             )
             month = execution_month(getattr(execution, "time", None))
@@ -646,6 +660,19 @@ def read_option_premiums(
                 daily[day]["premiumCollected"] = safe_float(daily[day]["premiumCollected"]) + signed_premium
         elif side in {"BOT", "BUY"}:
             signed_premium = -gross_premium - commission
+            symbol, base_symbol, _, option_type, _, expiry = contract_symbol(contract)
+            option_sales.append(
+                {
+                    "date": day or "",
+                    "symbol": symbol,
+                    "baseSymbol": base_symbol,
+                    "optionType": option_type or "",
+                    "expiry": expiry or "",
+                    "quantity": shares,
+                    "premium": signed_premium,
+                    "action": "buy",
+                }
+            )
         else:
             continue
 
@@ -867,6 +894,17 @@ def flex_option_key(row: Any) -> tuple[str, str, str, str] | None:
     return (base_symbol, expiry, f"{strike_price:g}", option_type)
 
 
+def is_leaps_expiry(expiry: Any, as_of: date | None = None) -> bool:
+    expiry_day = parse_day(expiry)
+    if not expiry_day:
+        return False
+    anchor = as_of or date.today()
+    try:
+        return (datetime.strptime(expiry_day, "%Y-%m-%d").date() - anchor).days >= 365
+    except ValueError:
+        return False
+
+
 def parse_option_symbol(symbol: str) -> tuple[str, str, bool, str | None, float | None, str | None]:
     parts = symbol.strip().split()
     base_symbol = parts[0] if parts else ""
@@ -1015,20 +1053,110 @@ def apply_flex_nav(data: dict[str, Any], report: Any) -> None:
     )
     if nav_rows and attr(nav_rows[0], "reportDate", default=""):
         nav_rows = sorted(nav_rows, key=lambda row: str(attr(row, "reportDate", default="")))
+
+    report_dates = [str(attr(row, "reportDate", default="")) for row in nav_rows if attr(row, "reportDate", default="")]
+    if report_dates:
+        latest_report_date = max(report_dates)
+        nav_rows = [row for row in nav_rows if str(attr(row, "reportDate", default="")) == latest_report_date]
+
+    total_value = 0.0
+    fallback_total = 0.0
+    cash_value = 0.0
     for row in nav_rows:
         asset_class = str(attr(row, "assetClass", "assetCategory", "currency", default="")).strip().lower()
         cash = safe_float(attr(row, "cash", "endingCash", default=0))
         current_total = safe_float(attr(row, "currentTotal", "total", "value", "amount", default=0))
         if cash:
-            data["nav"]["cash"] = cash
+            cash_value = cash
         if asset_class == "cash" and current_total:
-            data["nav"]["cash"] = current_total
-        elif asset_class == "total" or current_total:
-            data["totalNAV"] = current_total
-            data["navChange"]["endingValue"] = current_total
+            cash_value = current_total
+            fallback_total += current_total
+        elif asset_class in {"total", "total (all assets)", "all"} and current_total:
+            total_value = current_total
+        elif current_total:
+            fallback_total += current_total
         rate_of_return = safe_float(attr(row, "timeWeightedRateOfReturn", "twr", default=0))
         if rate_of_return:
             data["rateOfReturn"] = rate_of_return
+
+    if cash_value:
+        data["nav"]["cash"] = cash_value
+    if total_value or fallback_total:
+        data["totalNAV"] = total_value or fallback_total
+        data["navChange"]["endingValue"] = data["totalNAV"]
+
+
+def apply_flex_margin_liquidity(data: dict[str, Any], report: Any) -> None:
+    rows = first_topic(
+        report,
+        "AccountSummary",
+        "Account Summary",
+        "AccountValue",
+        "Account Values",
+        "AccountSummaryByReportDate",
+        "Account Summary By Report Date",
+        "AccountSummaryInBase",
+        "Account Summary in Base",
+        "AccountInformation",
+        "Account Information",
+        "AccountInfo",
+        "StatementOfFunds",
+        "Statement of Funds",
+    )
+    fields = flex_field_map(rows)
+    base_currency = data["accountInfo"]["baseCurrency"]
+    aliases = {
+        "netLiquidation": ("net liquidation", "netliquidation", "netliquidationvalue", "net liquidation value", "ending value", "endingvalue"),
+        "totalCash": ("total cash value", "totalcashvalue", "total cash", "totalcash", "cash balance", "cashbalance", "total cash balance", "totalcashbalance", "ending cash", "endingcash"),
+        "availableFunds": ("available funds", "availablefunds", "full available funds", "fullavailablefunds", "current available funds", "currentavailablefunds"),
+        "excessLiquidity": ("excess liquidity", "excessliquidity", "full excess liquidity", "fullexcessliquidity", "current excess liquidity", "currentexcessliquidity"),
+        "buyingPower": ("buying power", "buyingpower", "regt buying power", "regtbuyingpower"),
+        "maintenanceMargin": ("maintenance margin", "maintenancemargin", "maintenance margin requirement", "maintenancemarginrequirement", "maint margin req", "maintmarginreq", "full maintenance margin requirement", "fullmaintenancemarginrequirement", "full maint margin req", "fullmaintmarginreq"),
+        "initialMargin": ("initial margin", "initialmargin", "initial margin requirement", "initialmarginrequirement", "init margin req", "initmarginreq", "full initial margin requirement", "fullinitialmarginrequirement", "full init margin req", "fullinitmarginreq"),
+        "cushion": ("cushion",),
+    }
+
+    def direct_value(names: tuple[str, ...]) -> float:
+        for name in names:
+            if name in fields:
+                value = safe_float(fields[name])
+                if value:
+                    return value
+        return 0.0
+
+    for target, names in aliases.items():
+        value = direct_value(names)
+        if value:
+            data["marginLiquidity"][target] = value
+
+    normalized_aliases = {
+        target: {normalize_topic(name) for name in names}
+        for target, names in aliases.items()
+    }
+    for row in rows:
+        tag = str(attr(row, "tag", "name", "field", "fieldName", "key", "summaryName", default="")).strip()
+        normalized_tag = normalize_topic(tag)
+        if not normalized_tag:
+            continue
+        currency = str(attr(row, "currency", default=base_currency)).strip() or base_currency
+        if currency != base_currency:
+            continue
+        value = safe_float(attr(row, "value", "fieldValue", "amount", "currentTotal", "total", default=0))
+        if not value:
+            continue
+        for target, names in normalized_aliases.items():
+            if normalized_tag in names:
+                data["marginLiquidity"][target] = value
+                break
+
+    if data["totalNAV"] and not data["marginLiquidity"]["netLiquidation"]:
+        data["marginLiquidity"]["netLiquidation"] = data["totalNAV"]
+    if data["nav"]["cash"] and not data["marginLiquidity"]["totalCash"]:
+        data["marginLiquidity"]["totalCash"] = data["nav"]["cash"]
+    if not any(data["marginLiquidity"][key] for key in ("availableFunds", "excessLiquidity", "buyingPower", "maintenanceMargin", "initialMargin")):
+        data.get("historyStatus", {}).setdefault("warnings", []).append(
+            "The Flex Query does not include margin/liquidity fields such as Available Funds, Excess Liquidity, Buying Power, Maintenance Margin, or Initial Margin. Flex-only margin capacity metrics are unavailable; use IB Gateway or add account summary margin fields to the Flex Query."
+        )
 
 
 def apply_flex_nav_change(data: dict[str, Any], report: Any) -> None:
@@ -1265,9 +1393,19 @@ def flex_event_sort_key(row: Any, end_of_day: bool = False) -> datetime:
 
 def analyze_flex_option_activity(report: Any, base_currency: str) -> dict[str, Any]:
     events: list[tuple[datetime, str, Any]] = []
+    same_day_opening_sells: set[tuple[str, str, str]] = set()
     for trade in first_topic(report, "Trade", "Trades", "TradeConfirm", "Trade Confirms"):
         if flex_asset_category(attr(trade, "assetCategory", "assetClass", default="")) == "Options":
             events.append((flex_event_sort_key(trade), "trade", trade))
+            key = flex_option_key(trade)
+            if key:
+                base_symbol, _, _, option_type = key
+                signed_quantity = safe_float(attr(trade, "quantity", "qty", default=0))
+                buy_sell = str(attr(trade, "buySell", "side", default="")).upper()
+                transaction_type = str(attr(trade, "transactionType", default="")).upper()
+                trade_day = parse_day(attr(trade, "dateTime", "tradeDate", "reportDate", "date", default="")) or ""
+                if signed_quantity < 0 and buy_sell in {"SELL", "SLD"} and "BOOKTRADE" not in transaction_type:
+                    same_day_opening_sells.add((trade_day, base_symbol, option_type))
     for row in first_topic(report, "OptionEAE", "Option Exercises, Assignments and Expirations"):
         if flex_asset_category(attr(row, "assetCategory", "assetClass", default="")) == "Options":
             events.append((flex_event_sort_key(row, end_of_day=True), "option_eae", row))
@@ -1281,10 +1419,12 @@ def analyze_flex_option_activity(report: Any, base_currency: str) -> dict[str, A
     expired_put_contracts = 0.0
     winning_put_contracts = 0.0
     realized_short_put_income = 0.0
+    put_closure_breakdown = {"assigned": 0.0, "expired": 0.0, "rolled": 0.0, "boughtToClose": 0.0}
     closed_call_contracts = 0.0
     assigned_call_contracts = 0.0
     winning_call_contracts = 0.0
     realized_short_call_income = 0.0
+    call_closure_breakdown = {"assigned": 0.0, "expired": 0.0, "rolled": 0.0, "boughtToClose": 0.0}
     aroc_trades: list[dict[str, Any]] = []
     realized_events: list[dict[str, Any]] = []
 
@@ -1330,20 +1470,26 @@ def analyze_flex_option_activity(report: Any, base_currency: str) -> dict[str, A
                     net_income = reported_realized
                     counted_quantity = quantity if reported_realized else 0
                 if counted_quantity:
-                    symbol, _, _, _, _ = flex_option_symbol(row)
+                    symbol, base_symbol, _, _, _ = flex_option_symbol(row)
                     realized_events.append(
                         {
                             "date": parse_day(attr(row, "dateTime", "tradeDate", "reportDate", "date", default="")) or "",
                             "symbol": symbol,
+                            "baseSymbol": base_symbol,
+                            "optionType": option_type,
+                            "action": "buyClose",
                             "amount": net_income,
                         }
                     )
                 if option_type == "P" and counted_quantity:
                     closed_put_contracts += counted_quantity
+                    _, base_symbol, _, strike_price, expiry = flex_option_symbol(row)
+                    close_day = parse_day(attr(row, "dateTime", "tradeDate", "reportDate", "date", default="")) or ""
+                    close_method = "rolled" if (close_day, base_symbol, option_type) in same_day_opening_sells else "boughtToClose"
+                    put_closure_breakdown[close_method] += counted_quantity
                     if net_income >= 0:
                         winning_put_contracts += counted_quantity
                     realized_short_put_income += net_income
-                    _, base_symbol, _, strike_price, expiry = flex_option_symbol(row)
                     multiplier = safe_float(attr(row, "multiplier", default=100), 100) or 100
                     capital = (strike_price or safe_float(attr(row, "strike", default=0))) * counted_quantity * multiplier * rate
                     if net_income > 0 and capital > 0 and opened_at and event_time.year < 9999:
@@ -1351,6 +1497,10 @@ def analyze_flex_option_activity(report: Any, base_currency: str) -> dict[str, A
                         aroc_trades.append({"symbol": f"{base_symbol} {expiry} {strike_price:g} P" if strike_price else base_symbol, "premiumCollected": net_income, "capitalAtRisk": capital, "daysOpen": days_open, "aroc": (net_income / capital) * (365 / days_open)})
                 elif option_type == "C" and counted_quantity:
                     closed_call_contracts += counted_quantity
+                    _, base_symbol, _, _, _ = flex_option_symbol(row)
+                    close_day = parse_day(attr(row, "dateTime", "tradeDate", "reportDate", "date", default="")) or ""
+                    close_method = "rolled" if (close_day, base_symbol, option_type) in same_day_opening_sells else "boughtToClose"
+                    call_closure_breakdown[close_method] += counted_quantity
                     if net_income >= 0:
                         winning_call_contracts += counted_quantity
                     realized_short_call_income += net_income
@@ -1362,11 +1512,14 @@ def analyze_flex_option_activity(report: Any, base_currency: str) -> dict[str, A
 
         premium, opened_at, matched_quantity = close_option_lots(lots_by_key, key, quantity)
         if transaction_type == "expiration" and matched_quantity:
-            symbol, _, _, _, _ = flex_option_symbol(row)
+            symbol, base_symbol, _, _, _ = flex_option_symbol(row)
             realized_events.append(
                 {
                     "date": parse_day(attr(row, "date", "reportDate", default="")) or "",
                     "symbol": symbol,
+                    "baseSymbol": base_symbol,
+                    "optionType": option_type,
+                    "action": "expiration",
                     "amount": premium,
                 }
             )
@@ -1374,6 +1527,7 @@ def analyze_flex_option_activity(report: Any, base_currency: str) -> dict[str, A
             closed_put_contracts += quantity
             if transaction_type == "assignment":
                 assigned_put_contracts += quantity
+                put_closure_breakdown["assigned"] += quantity
                 _, base_symbol, _, strike_price, expiry = flex_option_symbol(row)
                 multiplier = safe_float(attr(row, "multiplier", default=100), 100) or 100
                 assignment_events.append(
@@ -1391,6 +1545,7 @@ def analyze_flex_option_activity(report: Any, base_currency: str) -> dict[str, A
                 )
             else:
                 expired_put_contracts += quantity
+                put_closure_breakdown["expired"] += quantity
                 winning_put_contracts += quantity
                 _, base_symbol, _, strike_price, expiry = flex_option_symbol(row)
                 multiplier = safe_float(attr(row, "multiplier", default=100), 100) or 100
@@ -1403,7 +1558,9 @@ def analyze_flex_option_activity(report: Any, base_currency: str) -> dict[str, A
             closed_call_contracts += matched_quantity
             if transaction_type == "assignment":
                 assigned_call_contracts += matched_quantity
+                call_closure_breakdown["assigned"] += matched_quantity
             else:
+                call_closure_breakdown["expired"] += matched_quantity
                 winning_call_contracts += matched_quantity
             realized_short_call_income += premium
 
@@ -1419,10 +1576,12 @@ def analyze_flex_option_activity(report: Any, base_currency: str) -> dict[str, A
         "assignedPutContracts": assigned_put_contracts,
         "expiredPutContracts": expired_put_contracts,
         "winningPutContracts": winning_put_contracts,
+        "putClosureBreakdown": put_closure_breakdown,
         "realizedShortPutIncome": realized_short_put_income,
         "closedCallContracts": closed_call_contracts,
         "assignedCallContracts": assigned_call_contracts,
         "winningCallContracts": winning_call_contracts,
+        "callClosureBreakdown": call_closure_breakdown,
         "realizedShortCallIncome": realized_short_call_income,
         "arocTrades": aroc_trades,
         "realizedEvents": realized_events,
@@ -1458,6 +1617,21 @@ def apply_flex_open_positions(data: dict[str, Any], report: Any, option_activity
         unrealized_pl = safe_float(attr(row, "unrealizedPL", "unrealizedPnl", "fifoPnlUnrealized", "unrealized", default=0)) * exchange_rate
         if is_option and quantity < 0 and collected_premium:
             unrealized_pl = collected_premium + value
+        close_price = safe_float(attr(row, "closePrice", "markPrice", "price", default=0))
+        if not close_price and not is_option and quantity:
+            close_price = (value / exchange_rate) / quantity
+        underlying_price = safe_float(
+            attr(
+                row,
+                "underlyingPrice",
+                "underlyingClosePrice",
+                "underlyingMarketPrice",
+                "underlyingLastPrice",
+                "underlyingPriceAtExpiration",
+                default=0,
+            )
+        ) or None
+        delta = safe_float(attr(row, "delta", "positionDelta", default=0))
 
         positions.append(
             {
@@ -1467,9 +1641,9 @@ def apply_flex_open_positions(data: dict[str, Any], report: Any, option_activity
                 "quantity": quantity,
                 "multiplier": safe_float(attr(row, "multiplier", "mult", default=100 if is_option else 1)) or (100 if is_option else 1),
                 "costBasis": safe_float(attr(row, "costBasis", "costBasisMoney", "cost", default=0)) * exchange_rate,
-                "closePrice": safe_float(attr(row, "closePrice", "markPrice", "price", default=0)),
-                "underlyingPrice": None,
-                "delta": None,
+                "closePrice": close_price,
+                "underlyingPrice": underlying_price,
+                "delta": delta if delta else None,
                 "value": value,
                 "unrealizedPL": unrealized_pl,
                 "currency": currency,
@@ -1562,7 +1736,7 @@ def apply_flex_mtdytd_summary(data: dict[str, Any], report: Any, ticker_pl: dict
             continue
 
         realized = safe_float(attr(row, "realizedPnlYTD", "realizedPnlMTD", "realizedTotal", default=0))
-        total = safe_float(attr(row, "mtmYTD", "mtmMTD", "total", default=0))
+        total = safe_float(attr(row, "mtmYTD", "mtmMTD", "totalPnl", "totalPnL", "pnlTotal", default=0))
         if not realized and not total:
             continue
 
@@ -1640,7 +1814,9 @@ def apply_flex_fifo_performance_summary(data: dict[str, Any], report: Any, ticke
                 default=0,
             )
         )
-        total = safe_float(attr(row, "total", "totalPnl", "totalPnL", default=realized + unrealized))
+        total = safe_float(attr(row, "totalPnl", "totalPnL", "pnlTotal", "pnl", default=realized + unrealized))
+        if not total and (realized or unrealized):
+            total = realized + unrealized
 
         totals[bucket_key]["realized"] += realized
         totals[bucket_key]["unrealized"] += unrealized
@@ -1680,6 +1856,7 @@ def apply_flex_option_metrics(data: dict[str, Any], option_activity: dict[str, A
         summary["totalRealizedPL"] = realized_income
         summary["numberOfContracts"] = total_closed
         summary["averagePLPerContract"] = realized_income / total_closed if total_closed else 0
+        summary["closureBreakdown"] = option_activity.get("putClosureBreakdown", {})
         summary["hasData"] = True
 
     call_closed = option_activity.get("closedCallContracts", 0) or 0
@@ -1693,6 +1870,7 @@ def apply_flex_option_metrics(data: dict[str, Any], option_activity: dict[str, A
         summary["averagePLPerContract"] = call_income / call_closed if call_closed else 0
         summary["assignmentRate"] = call_assigned / call_closed if call_closed else 0
         summary["winRate"] = call_wins / call_closed if call_closed else 0
+        summary["closureBreakdown"] = option_activity.get("callClosureBreakdown", {})
         summary["hasData"] = True
 
     aroc_trades = option_activity.get("arocTrades", [])
@@ -1713,8 +1891,88 @@ def apply_flex_wheel_cycles(data: dict[str, Any], report: Any, option_activity: 
         for position in data["positions"]
         if not position["isOption"] and position["quantity"] > 0
     }
-    call_premiums: dict[str, list[dict[str, Any]]] = {}
+    open_short_puts: dict[tuple[str, str, str], float] = {}
+    for position in data["positions"]:
+        if (
+            position.get("isOption")
+            and position.get("optionType") == "P"
+            and safe_float(position.get("quantity")) < 0
+            and position.get("baseSymbol")
+            and position.get("expiry")
+            and safe_float(position.get("strikePrice"))
+        ):
+            key = (str(position["baseSymbol"]), str(position["expiry"]), f"{safe_float(position['strikePrice']):g}")
+            open_short_puts[key] = open_short_puts.get(key, 0.0) + abs(safe_float(position.get("quantity")))
+    call_premium_events: dict[str, list[dict[str, Any]]] = {}
+    put_premium_events: dict[str, list[dict[str, Any]]] = {}
     stock_sales: dict[str, list[dict[str, Any]]] = {}
+    same_day_opening_sells: set[tuple[str, str, str]] = set()
+    close_method_queues: dict[tuple[str, str, str, str], list[str]] = {}
+
+    def option_close_key(base_symbol: str, option_type: str | None, strike: Any, expiry: Any) -> tuple[str, str, str, str]:
+        return (base_symbol, str(expiry or ""), f"{safe_float(strike):g}", option_type or "")
+
+    def add_close_method(base_symbol: str, option_type: str | None, strike: Any, expiry: Any, method: str, contracts: float) -> None:
+        key = option_close_key(base_symbol, option_type, strike, expiry)
+        quantity = max(1, round(abs(safe_float(contracts))))
+        close_method_queues.setdefault(key, []).extend([method] * quantity)
+
+    def take_close_method(log: dict[str, Any], fallback: str = "") -> str:
+        key = option_close_key(str(log.get("baseSymbol") or ""), str(log.get("optionType") or ""), log.get("strike"), log.get("expiry"))
+        queue = close_method_queues.get(key) or []
+        return queue.pop(0) if queue else fallback
+
+    def method_label(method: str) -> str:
+        labels = {
+            "assigned": "assigned",
+            "expired": "expired",
+            "rolled": "rolled",
+            "boughtToClose": "bought to close",
+        }
+        return labels.get(method, method)
+
+    def premium_log_description(log: dict[str, Any], option_name: str) -> str:
+        if log.get("_description"):
+            return str(log["_description"])
+        if log.get("action") == "sell":
+            method = take_close_method(log)
+            suffix = f" - {method_label(method)}" if method else ""
+            description = f"{option_name} sold{suffix} ({log['symbol']})"
+            log["_description"] = description
+            return description
+        method = str(log.get("closeMethod") or "")
+        suffix = f" - {method_label(method)}" if method else ""
+        description = f"{option_name} bought/closed{suffix} ({log['symbol']})"
+        log["_description"] = description
+        return description
+
+    for trade in first_topic(report, "Trade", "Trades", "TradeConfirm", "Trade Confirms"):
+        if flex_asset_category(attr(trade, "assetCategory", "assetClass", default="")) != "Options":
+            continue
+        _, base_symbol, option_type, _, _ = flex_option_symbol(trade)
+        quantity = safe_float(attr(trade, "quantity", "qty", default=0))
+        buy_sell = str(attr(trade, "buySell", "side", default="")).upper()
+        transaction_type = str(attr(trade, "transactionType", default="")).upper()
+        trade_date = parse_day(attr(trade, "dateTime", "tradeDate", "reportDate", "date", default="")) or ""
+        if option_type in {"P", "C"} and quantity < 0 and buy_sell in {"SELL", "SLD"} and "BOOKTRADE" not in transaction_type:
+            same_day_opening_sells.add((trade_date, base_symbol, option_type))
+
+    for row in first_topic(report, "OptionEAE", "Option Exercises, Assignments and Expirations"):
+        if flex_asset_category(attr(row, "assetCategory", "assetClass", default="")) != "Options":
+            continue
+        _, base_symbol, option_type, strike_price, expiry = flex_option_symbol(row)
+        transaction_type = str(attr(row, "transactionType", default="")).lower()
+        if option_type not in {"P", "C"} or transaction_type not in {"assignment", "expiration"}:
+            continue
+        add_close_method(
+            base_symbol,
+            option_type,
+            strike_price or safe_float(attr(row, "strike", default=0)),
+            expiry,
+            "assigned" if transaction_type == "assignment" else "expired",
+            safe_float(attr(row, "quantity", "qty", default=0)),
+        )
+
     for trade in first_topic(report, "Trade", "Trades", "TradeConfirm", "Trade Confirms"):
         category = flex_asset_category(attr(trade, "assetCategory", "assetClass", default=""))
         if category == "Stocks":
@@ -1735,23 +1993,59 @@ def apply_flex_wheel_cycles(data: dict[str, Any], report: Any, option_activity: 
             continue
         if category != "Options":
             continue
-        _, base_symbol, option_type, _, _ = flex_option_symbol(trade)
+        symbol_text, base_symbol, option_type, option_strike, option_expiry = flex_option_symbol(trade)
         quantity = safe_float(attr(trade, "quantity", "qty", default=0))
         buy_sell = str(attr(trade, "buySell", "side", default="")).upper()
         transaction_type = str(attr(trade, "transactionType", default="")).upper()
-        if option_type != "C" or quantity >= 0 or buy_sell not in {"SELL", "SLD"}:
+        if option_type not in {"P", "C"}:
+            continue
+        if option_type == "C" and is_leaps_expiry(option_expiry):
             continue
         currency = str(attr(trade, "currency", default=data["accountInfo"]["baseCurrency"]))
         rate = safe_float(attr(trade, "fxRateToBase", default=0)) or data["exchangeRates"].get(currency, 1) or 1
         proceeds = safe_float(attr(trade, "proceeds", default=0)) * rate
         commission = safe_float(attr(trade, "ibCommission", "commission", default=0)) * rate
-        call_premiums.setdefault(base_symbol, []).append(
+        cash_flow = proceeds + commission
+        multiplier = safe_float(attr(trade, "multiplier", default=100), 100) or 100
+        is_option_sale = quantity < 0 and buy_sell in {"SELL", "SLD"}
+        is_option_buy = quantity > 0 and buy_sell in {"BUY", "BOT"} and "BOOKTRADE" not in transaction_type
+        trade_date = parse_day(attr(trade, "dateTime", "tradeDate", "reportDate", "date", default="")) or ""
+        if not is_option_sale and not is_option_buy:
+            continue
+        close_method = ""
+        if is_option_buy:
+            close_method = "rolled" if (trade_date, base_symbol, option_type) in same_day_opening_sells else "boughtToClose"
+            add_close_method(base_symbol, option_type, option_strike or safe_float(attr(trade, "strike", default=0)), option_expiry, close_method, abs(quantity))
+        premium_events = call_premium_events if option_type == "C" else put_premium_events
+        premium_events.setdefault(base_symbol, []).append(
             {
-                "date": parse_day(attr(trade, "dateTime", "tradeDate", "reportDate", "date", default="")) or "",
-                "symbol": str(attr(trade, "symbol", "description", default="")),
-                "amount": proceeds + commission,
+                "date": trade_date,
+                "symbol": symbol_text,
+                "baseSymbol": base_symbol,
+                "optionType": option_type,
+                "amount": cash_flow,
+                "strike": option_strike or safe_float(attr(trade, "strike", default=0)),
+                "expiry": option_expiry or "",
+                "contracts": abs(quantity),
+                "shares": abs(quantity) * multiplier,
+                "action": "sell" if is_option_sale else "buy",
+                "closeMethod": close_method,
             }
         )
+    for events in call_premium_events.values():
+        events.sort(key=lambda event: event.get("date") or "")
+    for events in put_premium_events.values():
+        events.sort(key=lambda event: event.get("date") or "")
+    open_put_roll_dates: set[tuple[str, str]] = set()
+    open_short_puts_for_dates = dict(open_short_puts)
+    for base_symbol, events in put_premium_events.items():
+        for log in events:
+            key = (base_symbol, str(log.get("expiry") or ""), f"{safe_float(log.get('strike')):g}")
+            contracts = safe_float(log.get("contracts")) or safe_float(log.get("shares")) / 100
+            if log.get("action") == "sell" and open_short_puts_for_dates.get(key, 0) > 0:
+                skipped = min(open_short_puts_for_dates[key], contracts or open_short_puts_for_dates[key])
+                open_short_puts_for_dates[key] -= skipped
+                open_put_roll_dates.add((base_symbol, str(log.get("date") or "")))
 
     pending_cycles = []
     completed_cycles = []
@@ -1759,31 +2053,79 @@ def apply_flex_wheel_cycles(data: dict[str, Any], report: Any, option_activity: 
         symbol = event["symbol"]
         assignment_shares = event["quantity"] * event["multiplier"]
         assignment_cost = event["strike"] * assignment_shares * event["rate"]
-        initial_put_premium = event["premium"]
-        net_assignment_cost = assignment_cost - initial_put_premium
         assignment_date = event["date"]
+        put_logs: list[dict[str, Any]] = []
+        open_put_log: list[dict[str, Any]] = []
+        remaining_put_events = put_premium_events.get(symbol, [])
+        while remaining_put_events and (not assignment_date or not remaining_put_events[0]["date"] or remaining_put_events[0]["date"] <= assignment_date):
+            put_logs.append(remaining_put_events.pop(0))
+        realized_put_logs: list[dict[str, Any]] = []
+        for log in put_logs:
+            key = (symbol, str(log.get("expiry") or ""), f"{safe_float(log.get('strike')):g}")
+            contracts = safe_float(log.get("contracts")) or safe_float(log.get("shares")) / 100
+            if log.get("action") == "sell" and open_short_puts.get(key, 0) > 0:
+                skipped = min(open_short_puts[key], contracts or open_short_puts[key])
+                open_short_puts[key] -= skipped
+                if skipped:
+                    open_amount = safe_float(log.get("amount")) * (skipped / contracts) if contracts else safe_float(log.get("amount"))
+                    open_put_log.append(
+                        {
+                            "date": log["date"],
+                            "description": f"Open put sold ({log['symbol']})",
+                            "amount": open_amount,
+                        }
+                    )
+                if contracts and skipped < contracts:
+                    realized_log = dict(log)
+                    realized_log["amount"] = safe_float(log.get("amount")) * ((contracts - skipped) / contracts)
+                    realized_log["shares"] = safe_float(log.get("shares")) * ((contracts - skipped) / contracts)
+                    realized_log["contracts"] = contracts - skipped
+                    realized_put_logs.append(realized_log)
+                continue
+            realized_put_logs.append(log)
+        put_logs = realized_put_logs
+        has_assigned_put_sale = any(
+            log.get("action") == "sell"
+            and abs(safe_float(log.get("strike")) - safe_float(event.get("strike"))) < 1e-9
+            and (not event.get("expiry") or not log.get("expiry") or log.get("expiry") == event.get("expiry"))
+            for log in put_logs
+        )
+        assignment_premium = 0.0 if has_assigned_put_sale else safe_float(event.get("premium"))
+        initial_put_premium = sum(safe_float(log.get("amount")) for log in put_logs) + assignment_premium
+        net_assignment_cost = assignment_cost - initial_put_premium
         total_call_premium = 0.0
+        assignment_option_symbol = (
+            f"{symbol} {event.get('expiry')} {safe_float(event.get('strike')):g} P"
+            if event.get("expiry")
+            else f"{symbol} {safe_float(event.get('strike')):g} P"
+        )
         trade_log = [
+            *[
+                {
+                    "date": log["date"],
+                    "description": premium_log_description(log, "Put"),
+                    "amount": log["amount"],
+                }
+                for log in put_logs
+            ],
+            *([] if not assignment_premium else [{
+                "date": assignment_date,
+                "description": f"Put sold - assigned ({assignment_option_symbol})",
+                "amount": assignment_premium,
+            }]),
             {
                 "date": assignment_date,
                 "description": f"Assigned {assignment_shares:g} shares @ {event['strike']:g}",
                 "amount": -assignment_cost,
             },
-            {
-                "date": assignment_date,
-                "description": "Put premium applied",
-                "amount": initial_put_premium,
-            },
         ]
 
-        for call in call_premiums.get(symbol, []):
-            if call["date"] and assignment_date and call["date"] < assignment_date:
-                continue
+        for call in call_premium_events.get(symbol, []):
             total_call_premium += call["amount"]
             trade_log.append(
                 {
                     "date": call["date"],
-                    "description": f"Call premium ({call['symbol']})",
+                    "description": premium_log_description(call, "Call"),
                     "amount": call["amount"],
                 }
             )
@@ -1803,10 +2145,15 @@ def apply_flex_wheel_cycles(data: dict[str, Any], report: Any, option_activity: 
                 trade_log.append({"date": sale["date"], "description": f"Sold {used:g} shares", "amount": sale["proceeds"] * (used / sale["shares"])})
                 if remaining <= 1e-9:
                     break
-            completed_calls = [call for call in call_premiums.get(symbol, []) if (not assignment_date or call["date"] >= assignment_date) and (not end_date or call["date"] <= end_date)]
+            completed_calls = [call for call in call_premium_events.get(symbol, []) if (not assignment_date or call["date"] >= assignment_date) and (not end_date or call["date"] <= end_date)]
             total_call_premium = sum(call["amount"] for call in completed_calls)
-            trade_log = trade_log[:2] + [
-                {"date": call["date"], "description": f"Call premium ({call['symbol']})", "amount": call["amount"]}
+            base_trade_log = [
+                entry for entry in trade_log
+                if not str(entry.get("description", "")).startswith("Call ")
+                and not str(entry.get("description", "")).startswith("Sold ")
+            ]
+            trade_log = base_trade_log + [
+                {"date": call["date"], "description": premium_log_description(call, "Call"), "amount": call["amount"]}
                 for call in completed_calls
             ] + [entry for entry in trade_log if entry["description"].startswith("Sold ")]
             start_dt = datetime.strptime(assignment_date, "%Y-%m-%d").date() if assignment_date else date.today()
@@ -1836,6 +2183,36 @@ def apply_flex_wheel_cycles(data: dict[str, Any], report: Any, option_activity: 
             )
             continue
 
+        remaining_put_events = put_premium_events.get(symbol, [])
+        while remaining_put_events:
+            log = remaining_put_events.pop(0)
+            key = (symbol, str(log.get("expiry") or ""), f"{safe_float(log.get('strike')):g}")
+            contracts = safe_float(log.get("contracts")) or safe_float(log.get("shares")) / 100
+            if log.get("action") == "sell" and open_short_puts.get(key, 0) > 0:
+                skipped = min(open_short_puts[key], contracts or open_short_puts[key])
+                open_short_puts[key] -= skipped
+                if not contracts or skipped >= contracts:
+                    open_put_log.append(
+                        {
+                            "date": log["date"],
+                            "description": f"Open put sold ({log['symbol']})",
+                            "amount": log["amount"],
+                        }
+                    )
+                    continue
+                open_put_amount = safe_float(log.get("amount")) * (skipped / contracts)
+                if open_put_amount:
+                    open_put_log.append(
+                        {
+                            "date": log["date"],
+                            "description": f"Open put sold ({log['symbol']})",
+                            "amount": open_put_amount,
+                        }
+                    )
+            # Put activity after assignment belongs to a new put-phase exposure for
+            # the ticker. Do not fold it into assigned-share basis or realized P/L
+            # for this assigned stock cycle.
+
         stock_position = stock_positions.get(symbol)
         if not stock_position:
             continue
@@ -1843,8 +2220,52 @@ def apply_flex_wheel_cycles(data: dict[str, Any], report: Any, option_activity: 
         current_price = stock_position["closePrice"] or (
             stock_position["value"] / stock_position["quantity"] if stock_position["quantity"] else 0
         )
-        current_stock_value = current_price * assignment_shares * data["exchangeRates"].get(stock_position["currency"], 1)
-        unrealized_stock_pl = current_stock_value - net_assignment_cost
+        exchange_rate = data["exchangeRates"].get(stock_position["currency"], 1)
+        current_stock_value = current_price * assignment_shares * exchange_rate
+        current_open_calls = [
+            position for position in data["positions"]
+            if position.get("isOption")
+            and position.get("optionType") == "C"
+            and not is_leaps_expiry(position.get("expiry"))
+            and position.get("quantity", 0) < 0
+            and position.get("baseSymbol") == symbol
+        ]
+        covered_call_shares = min(assignment_shares, sum(abs(safe_float(call.get("quantity"))) * (safe_float(call.get("multiplier"), 100) or 100) for call in current_open_calls))
+        weighted_call_shares = sum(abs(safe_float(call.get("quantity"))) * (safe_float(call.get("multiplier"), 100) or 100) for call in current_open_calls if safe_float(call.get("strikePrice")))
+        covered_call_strike = (
+            sum(safe_float(call.get("strikePrice")) * abs(safe_float(call.get("quantity"))) * (safe_float(call.get("multiplier"), 100) or 100) for call in current_open_calls if safe_float(call.get("strikePrice"))) / weighted_call_shares
+            if weighted_call_shares else None
+        )
+        uncovered_shares = assignment_shares - covered_call_shares
+        capped_stock_value = (
+            ((covered_call_shares * covered_call_strike) + (uncovered_shares * current_price)) * exchange_rate
+            if covered_call_strike else current_stock_value
+        )
+        unrealized_stock_pl = capped_stock_value - net_assignment_cost
+        stock_pl_at_current = current_stock_value - net_assignment_cost
+        open_call_credit = sum(safe_float(call.get("collectedPremium")) for call in current_open_calls)
+        if not open_call_credit:
+            open_call_credit = sum(
+                safe_float(entry.get("amount"))
+                for entry in trade_log
+                if str(entry.get("description", "")).lower().startswith("call sold (")
+            )
+        realized_call_pl = total_call_premium - open_call_credit
+        open_put_credit = sum(safe_float(entry.get("amount")) for entry in open_put_log)
+        mtm_option_value = sum(
+            safe_float(position.get("value"))
+            for position in data["positions"]
+            if position.get("isOption")
+            and position.get("baseSymbol") == symbol
+            and not is_leaps_expiry(position.get("expiry"))
+        )
+        mtm_wheel_pl = stock_pl_at_current + realized_call_pl + mtm_option_value
+        if covered_call_shares >= assignment_shares and assignment_shares:
+            status = "assigned-covered"
+        elif covered_call_shares > 0:
+            status = "assigned-partial"
+        else:
+            status = "assigned-uncovered"
         current_total_pl = unrealized_stock_pl + total_call_premium
         start_dt = datetime.strptime(assignment_date, "%Y-%m-%d").date() if assignment_date else date.today()
         duration_days = max(1, (date.today() - start_dt).days)
@@ -1853,18 +2274,32 @@ def apply_flex_wheel_cycles(data: dict[str, Any], report: Any, option_activity: 
             {
                 "symbol": symbol,
                 "currency": event["currency"],
+                "status": status,
                 "initialPutPremium": initial_put_premium,
+                "realizedPutPL": initial_put_premium,
+                "openPutCredit": open_put_credit,
                 "startDate": assignment_date,
                 "assignmentShares": assignment_shares,
                 "assignmentPrice": event["strike"],
                 "assignmentCost": assignment_cost,
                 "netAssignmentCost": net_assignment_cost,
                 "totalCallPremium": total_call_premium,
+                "realizedCallPL": realized_call_pl,
+                "openCallCredit": open_call_credit,
+                "coveredCallStrike": covered_call_strike,
+                "coveredCallShares": covered_call_shares,
+                "cappedStockValue": capped_stock_value,
+                "effectiveBasisPerShare": net_assignment_cost / assignment_shares if assignment_shares else 0,
                 "currentStockValue": current_stock_value,
                 "unrealizedStockPL": unrealized_stock_pl,
+                "stockPLAtCurrent": stock_pl_at_current,
+                "ifCalledAwayPL": current_total_pl,
+                "mtmWheelPL": mtm_wheel_pl,
                 "currentTotalPL": current_total_pl,
                 "annualizedReturn": (current_total_pl / assignment_cost) * (365 / duration_days) if assignment_cost else 0,
                 "tradeLog": trade_log,
+                "openPutLog": open_put_log,
+                "dataConfidence": "reconciled",
             }
         )
 
@@ -1946,8 +2381,7 @@ def build_flex_dashboard_from_report(report: Any) -> dict[str, Any]:
     option_activity = analyze_flex_option_activity(report, data["accountInfo"]["baseCurrency"])
     apply_flex_nav(data, report)
     apply_flex_nav_change(data, report)
-    data["marginLiquidity"]["netLiquidation"] = data["totalNAV"]
-    data["marginLiquidity"]["totalCash"] = data["nav"]["cash"]
+    apply_flex_margin_liquidity(data, report)
     apply_flex_equity_history(data, report)
     apply_flex_open_positions(data, report, option_activity)
     apply_flex_option_metrics(data, option_activity)
@@ -2185,8 +2619,13 @@ def merge_flex_history(live: dict[str, Any], flex: dict[str, Any]) -> dict[str, 
     ]
     if intraday_put_closes:
         put_summary = live["shortPutIncomeSummary"]
+        put_summary["closureBreakdown"] = dict(
+            put_summary.get("closureBreakdown") or {"assigned": 0, "expired": 0, "rolled": 0, "boughtToClose": 0}
+        )
+        added_contracts = sum(abs(safe_float(event.get("quantity"))) for event in intraday_put_closes)
         put_summary["totalRealizedPL"] += sum(safe_float(event.get("realizedPL")) for event in intraday_put_closes)
-        put_summary["numberOfContracts"] += sum(abs(safe_float(event.get("quantity"))) for event in intraday_put_closes)
+        put_summary["numberOfContracts"] += added_contracts
+        put_summary["closureBreakdown"]["boughtToClose"] = safe_float(put_summary["closureBreakdown"].get("boughtToClose")) + added_contracts
         put_summary["averagePLPerContract"] = (
             put_summary["totalRealizedPL"] / put_summary["numberOfContracts"]
             if put_summary["numberOfContracts"] else 0
@@ -2200,6 +2639,9 @@ def merge_flex_history(live: dict[str, Any], flex: dict[str, Any]) -> dict[str, 
     ]
     if intraday_call_closes:
         call_summary = live["shortCallIncomeSummary"]
+        call_summary["closureBreakdown"] = dict(
+            call_summary.get("closureBreakdown") or {"assigned": 0, "expired": 0, "rolled": 0, "boughtToClose": 0}
+        )
         added_contracts = sum(abs(safe_float(event.get("quantity"))) for event in intraday_call_closes)
         added_wins = sum(
             abs(safe_float(event.get("quantity")))
@@ -2214,6 +2656,7 @@ def merge_flex_history(live: dict[str, Any], flex: dict[str, Any]) -> dict[str, 
         call_summary["assignmentRate"] = (
             call_summary["assignmentRate"] * (call_summary["numberOfContracts"] - added_contracts) / call_summary["numberOfContracts"]
         )
+        call_summary["closureBreakdown"]["boughtToClose"] = safe_float(call_summary["closureBreakdown"].get("boughtToClose")) + added_contracts
         call_summary["hasData"] = True
     live["arocAnalysis"] = flex["arocAnalysis"]
     live["optionsStrategyMetrics"] = dict(flex["optionsStrategyMetrics"])
@@ -2271,8 +2714,83 @@ def merge_flex_history(live: dict[str, Any], flex: dict[str, Any]) -> dict[str, 
         exchange_rate = live["exchangeRates"].get(stock["currency"], 1)
         current_price = stock["closePrice"] or (stock["value"] / stock["quantity"] if stock["quantity"] else 0)
         cycle["currentStockValue"] = current_price * cycle["assignmentShares"] * exchange_rate
-        cycle["unrealizedStockPL"] = cycle["currentStockValue"] - cycle["netAssignmentCost"]
+        current_open_calls = [
+            position
+            for position in live["positions"]
+            if position["isOption"]
+            and position.get("optionType") == "C"
+            and position["quantity"] < 0
+            and position.get("baseSymbol") == cycle["symbol"]
+            and safe_float(position.get("strikePrice"))
+            and not is_leaps_expiry(position.get("expiry"))
+        ]
+        open_call_shares = sum(
+            abs(safe_float(call.get("quantity"))) * (safe_float(call.get("multiplier"), 100) or 100)
+            for call in current_open_calls
+        )
+        open_call_strike_shares = sum(
+            abs(safe_float(call.get("quantity"))) * (safe_float(call.get("multiplier"), 100) or 100)
+            for call in current_open_calls
+            if safe_float(call.get("strikePrice"))
+        )
+        covered_call_strike = (
+            sum(
+                safe_float(call.get("strikePrice"))
+                * abs(safe_float(call.get("quantity")))
+                * (safe_float(call.get("multiplier"), 100) or 100)
+                for call in current_open_calls
+                if safe_float(call.get("strikePrice"))
+            )
+            / open_call_strike_shares
+            if open_call_strike_shares
+            else safe_float(cycle.get("coveredCallStrike"))
+        )
+        covered_call_shares = (
+            min(safe_float(cycle.get("assignmentShares")), open_call_shares)
+            if open_call_shares and covered_call_strike
+            else safe_float(cycle.get("coveredCallShares"))
+        )
+        cycle["coveredCallStrike"] = covered_call_strike or None
+        cycle["coveredCallShares"] = covered_call_shares or 0
+        if covered_call_strike and covered_call_shares:
+            uncovered_shares = max(0, safe_float(cycle.get("assignmentShares")) - covered_call_shares)
+            cycle["cappedStockValue"] = ((covered_call_shares * covered_call_strike) + (uncovered_shares * current_price)) * exchange_rate
+        else:
+            cycle["cappedStockValue"] = cycle["currentStockValue"]
+        cycle["unrealizedStockPL"] = cycle["cappedStockValue"] - cycle["netAssignmentCost"]
         cycle["currentTotalPL"] = cycle["unrealizedStockPL"] + cycle["totalCallPremium"]
+        cycle["realizedPutPL"] = safe_float(cycle.get("realizedPutPL"), safe_float(cycle.get("initialPutPremium")))
+        cycle["effectiveBasisPerShare"] = (
+            safe_float(cycle.get("netAssignmentCost")) / safe_float(cycle.get("assignmentShares"))
+            if safe_float(cycle.get("assignmentShares")) else 0
+        )
+        cycle["stockPLAtCurrent"] = cycle["currentStockValue"] - cycle["netAssignmentCost"]
+        cycle["openPutCredit"] = sum(safe_float(entry.get("amount")) for entry in cycle.get("openPutLog", []))
+        open_call_credit = sum(safe_float(call.get("collectedPremium")) for call in current_open_calls)
+        if not open_call_credit:
+            open_call_credit = sum(
+                safe_float(entry.get("amount"))
+                for entry in cycle.get("tradeLog", [])
+                if str(entry.get("description", "")).lower().startswith("call sold (")
+            )
+        cycle["openCallCredit"] = open_call_credit
+        cycle["realizedCallPL"] = safe_float(cycle.get("totalCallPremium")) - open_call_credit
+        cycle["ifCalledAwayPL"] = cycle["currentTotalPL"]
+        mtm_option_value = sum(
+            safe_float(position.get("value"))
+            for position in live["positions"]
+            if position.get("isOption")
+            and position.get("baseSymbol") == cycle["symbol"]
+            and not is_leaps_expiry(position.get("expiry"))
+        )
+        cycle["mtmWheelPL"] = cycle["stockPLAtCurrent"] + cycle["realizedCallPL"] + mtm_option_value
+        assignment_shares = safe_float(cycle.get("assignmentShares"))
+        if covered_call_shares >= assignment_shares and assignment_shares:
+            cycle["status"] = "assigned-covered"
+        elif covered_call_shares > 0:
+            cycle["status"] = "assigned-partial"
+        else:
+            cycle["status"] = "assigned-uncovered"
         start = parse_day(cycle.get("startDate"))
         duration_days = 1
         if start:
@@ -2284,19 +2802,44 @@ def merge_flex_history(live: dict[str, Any], flex: dict[str, Any]) -> dict[str, 
             for position in live["positions"]
             if position["isOption"]
             and position.get("optionType") == "C"
+            and not is_leaps_expiry(position.get("expiry"))
             and position["quantity"] < 0
             and position.get("baseSymbol") == cycle["symbol"]
         }
-        new_call_premium = sum(
-            safe_float(event.get("premium"))
+        new_call_events = [
+            event
             for event in new_option_sales
             if event.get("optionType") == "C"
             and event.get("baseSymbol") == cycle["symbol"]
+            and not is_leaps_expiry(event.get("expiry"))
             and event.get("symbol") in open_call_symbols
-        )
+        ]
+        existing_log_keys = {
+            (
+                str(entry.get("date") or ""),
+                str(entry.get("description") or ""),
+                round(safe_float(entry.get("amount")), 6),
+            )
+            for entry in cycle.get("tradeLog", [])
+        }
+        for event in new_call_events:
+            description = f"{'Call bought/closed' if event.get('action') == 'buy' else 'Call sold'} ({event.get('symbol') or cycle['symbol']})"
+            log_entry = {
+                "date": event.get("date") or "",
+                "description": description,
+                "amount": safe_float(event.get("premium")),
+            }
+            key = (log_entry["date"], log_entry["description"], round(log_entry["amount"], 6))
+            if key not in existing_log_keys:
+                cycle.setdefault("tradeLog", []).append(log_entry)
+                existing_log_keys.add(key)
+        new_call_premium = sum(safe_float(event.get("premium")) for event in new_call_events)
         if new_call_premium:
             cycle["totalCallPremium"] += new_call_premium
             cycle["currentTotalPL"] += new_call_premium
+            cycle["realizedCallPL"] = safe_float(cycle.get("totalCallPremium")) - safe_float(cycle.get("openCallCredit"))
+            cycle["ifCalledAwayPL"] = cycle["currentTotalPL"]
+            cycle["mtmWheelPL"] = cycle["stockPLAtCurrent"] + cycle["realizedCallPL"] + mtm_option_value
             cycle["annualizedReturn"] = (cycle["currentTotalPL"] / cycle["assignmentCost"]) * (365 / duration_days) if cycle.get("assignmentCost") else 0
 
     if not live["positions"] and flex["positions"]:

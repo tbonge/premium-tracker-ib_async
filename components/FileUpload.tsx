@@ -11,15 +11,57 @@ import LanguageSwitcher from './LanguageSwitcher';
 
 interface FileUploadProps {
   onFileSelect: (file: File) => void;
-  onLiveLoad: () => void;
-  onFlexLoad: () => void;
+  onLiveLoad: (credentials: FlexCredentials) => void;
+  onFlexLoad: (credentials: FlexCredentials) => void;
 }
+
+export interface FlexCredentials {
+  flexToken: string;
+  flexQueryId: string;
+}
+
+const FLEX_TOKEN_STORAGE_KEY = 'ib-flex-token';
+const FLEX_QUERY_ID_STORAGE_KEY = 'ib-flex-query-id';
 
 const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, onLiveLoad, onFlexLoad }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isInstructionsVisible, setIsInstructionsVisible] = useState(false);
   const [isGuideVisible, setIsGuideVisible] = useState(false);
+  const [flexToken, setFlexToken] = useState(() => {
+    try {
+      return window.localStorage.getItem(FLEX_TOKEN_STORAGE_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
+  const [flexQueryId, setFlexQueryId] = useState(() => {
+    try {
+      return window.localStorage.getItem(FLEX_QUERY_ID_STORAGE_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
   const { t } = useLocalization();
+
+  const credentials = { flexToken: flexToken.trim(), flexQueryId: flexQueryId.trim() };
+
+  const updateFlexToken = (value: string) => {
+    setFlexToken(value);
+    try {
+      window.localStorage.setItem(FLEX_TOKEN_STORAGE_KEY, value);
+    } catch {
+      // localStorage can be unavailable in private browsing contexts.
+    }
+  };
+
+  const updateFlexQueryId = (value: string) => {
+    setFlexQueryId(value);
+    try {
+      window.localStorage.setItem(FLEX_QUERY_ID_STORAGE_KEY, value);
+    } catch {
+      // localStorage can be unavailable in private browsing contexts.
+    }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -70,7 +112,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, onLiveLoad, onFle
           <div className="flex flex-wrap justify-center gap-3">
             <button
               type="button"
-              onClick={onLiveLoad}
+              onClick={() => onLiveLoad(credentials)}
               className="inline-flex items-center gap-2 rounded-md bg-brand-accent px-5 py-3 font-semibold text-white shadow-md transition-colors hover:bg-brand-accent-hover focus:outline-none focus:ring-2 focus:ring-brand-accent focus:ring-opacity-75"
             >
               <PlugIcon className="h-5 w-5" />
@@ -78,7 +120,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, onLiveLoad, onFle
             </button>
             <button
               type="button"
-              onClick={onFlexLoad}
+              onClick={() => onFlexLoad(credentials)}
               className="inline-flex items-center gap-2 rounded-md bg-brand-card px-5 py-3 font-semibold text-brand-text-primary shadow-md transition-colors hover:bg-brand-accent-hover hover:text-white focus:outline-none focus:ring-2 focus:ring-brand-accent focus:ring-opacity-75"
             >
               <PlugIcon className="h-5 w-5" />
@@ -91,6 +133,35 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, onLiveLoad, onFle
           <p className="max-w-2xl text-sm text-brand-text-secondary">
             {t('fileUpload.flexLoad.description')}
           </p>
+          <div className="mt-2 grid w-full max-w-3xl grid-cols-1 gap-3 text-left md:grid-cols-2">
+            <label className="space-y-1">
+              <span className="text-sm font-semibold text-brand-text-secondary">{t('fileUpload.flexCredentials.tokenLabel')}</span>
+              <input
+                type="password"
+                value={flexToken}
+                onChange={event => updateFlexToken(event.target.value)}
+                className="w-full rounded-md border border-brand-card bg-brand-bg px-3 py-2 font-mono text-sm text-brand-text-primary outline-none focus:border-brand-accent focus:ring-1 focus:ring-brand-accent"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={t('fileUpload.flexCredentials.tokenPlaceholder')}
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-sm font-semibold text-brand-text-secondary">{t('fileUpload.flexCredentials.queryIdLabel')}</span>
+              <input
+                type="text"
+                value={flexQueryId}
+                onChange={event => updateFlexQueryId(event.target.value)}
+                className="w-full rounded-md border border-brand-card bg-brand-bg px-3 py-2 font-mono text-sm text-brand-text-primary outline-none focus:border-brand-accent focus:ring-1 focus:ring-brand-accent"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={t('fileUpload.flexCredentials.queryIdPlaceholder')}
+              />
+            </label>
+            <p className="md:col-span-2 text-xs text-brand-text-secondary">
+              {t('fileUpload.flexCredentials.storageNote')}
+            </p>
+          </div>
         </div>
         
         <label

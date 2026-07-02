@@ -9,6 +9,7 @@ interface ShortPutPosition extends Position {
     dte?: number;
     breakevenPrice?: number;
     stockPrice?: number;
+    moneyness?: number;
 }
 
 interface Props {
@@ -16,6 +17,7 @@ interface Props {
     formatInSelectedCurrency: (value: number) => string;
     formatCurrency: (value: number, currency: string) => string;
     captureThreshold?: number;
+    urgentDte?: number;
 }
 
 type Candidate = ShortPutPosition & {
@@ -26,14 +28,21 @@ type Candidate = ShortPutPosition & {
 };
 type SortKey = 'symbol' | 'dte' | 'strikePrice' | 'stockPrice' | 'breakevenPrice' | 'premium' | 'closeCost' | 'capturedProfit' | 'capture';
 
-const BuyToCloseCandidates: React.FC<Props> = ({ puts, formatInSelectedCurrency, formatCurrency, captureThreshold = DEFAULT_DASHBOARD_THRESHOLDS.capture }) => {
+const BuyToCloseCandidates: React.FC<Props> = ({ puts, formatInSelectedCurrency, formatCurrency, captureThreshold = DEFAULT_DASHBOARD_THRESHOLDS.capture, urgentDte = DEFAULT_DASHBOARD_THRESHOLDS.urgentDte }) => {
     const { t, locale } = useLocalization();
     const candidates = useMemo(() => puts.map(position => {
         const premium = position.collectedPremium || 0;
         const closeCost = Math.abs(position.value);
         const capturedProfit = premium - closeCost;
-        return { ...position, premium, closeCost, capturedProfit, capture: premium > 0 ? capturedProfit / premium : 0 };
-    }).filter(position => position.premium > 0 && position.capture >= captureThreshold), [puts, captureThreshold]);
+        const capture = premium > 0 ? capturedProfit / premium : 0;
+        const dte = position.dte ?? Infinity;
+        const isOtm = (position.moneyness ?? 1) >= 0;
+        const letExpireOtm = isOtm
+            && dte <= urgentDte
+            && capture >= captureThreshold
+            && closeCost <= Math.max(5, premium * 0.05);
+        return { ...position, premium, closeCost, capturedProfit, capture, letExpireOtm };
+    }).filter(position => position.premium > 0 && position.capture >= captureThreshold && !position.letExpireOtm), [puts, captureThreshold, urgentDte]);
     const valueFor = useCallback((row: Candidate, key: SortKey) => row[key], []);
     const { sortedRows, sort, requestSort } = useSortableRows(candidates, 'capture' as SortKey, valueFor, 'desc');
 
